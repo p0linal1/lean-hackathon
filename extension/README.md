@@ -22,6 +22,8 @@ lake exe lean_http_server
 - `window.__nytPipsReadState()` reads and logs the current snapshot on demand.
 - `window.__nytPipsSubmitState()` reads and submits the current snapshot to `http://127.0.0.1:8765/game-state`.
 
+The popup asks `content.js` for the current state, so it uses the same board detection path as the page logger. `solver.js` adds an in-page **Solve with brute force** button next to the puzzle and uses that same state reader before attempting to place the dominoes.
+
 The logged snapshot includes:
 
 - `board`: active node ids with `left`, `right`, `up`, and `down` links

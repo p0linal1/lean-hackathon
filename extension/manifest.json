@@ -17,7 +17,7 @@
         "https://www.nytimes.com/games/pips*",
         "https://www.nytimes.com/puzzles/pips*"
       ],
-      "js": ["content.js"],
+      "js": ["content.js", "solver.js"],
       "run_at": "document_idle"
     }
   ]
