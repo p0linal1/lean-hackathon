@@ -8,3 +8,7 @@ name = "Untitled"
 [[lean_exe]]
 name = "untitled"
 root = "Main"
+
+[[lean_exe]]
+name = "lean_http_server"
+root = "LeanHttpServer"
