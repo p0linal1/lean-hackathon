@@ -1,15 +1,15 @@
-import Std.Data.HashMap
-import Std.Data.HashSet
-
 /-!
 # Pip Puzzle Formalization
 
 Two-layer architecture:
 1. **Spec layer** — Prop-based definitions using ∀/∃ over simple types.
    Theorems are proved against this layer.
-2. **Implementation layer** — Bool-returning functions with HashMaps.
+2. **Implementation layer** — Bool-returning functions with edge lists.
    This is what actually executes.
 3. **Bridge** — proves the implementation decides the spec.
+
+Edges are stored in normalized form: (min id, max id). Queries normalize
+before lookup, so adjacency is symmetric by construction.
 -/
 
 -- ============================================================================
@@ -20,10 +20,17 @@ structure Node where
   id : Nat
 deriving Repr, DecidableEq, Hashable, BEq
 
+instance : Ord Node where
+  compare n₁ n₂ := compare n₁.id n₂.id
+
 structure Domino where
   left : Nat
   right : Nat
 deriving Repr, DecidableEq, BEq, Hashable
+
+/-- Normalize an edge so the smaller node id comes first. -/
+def normalizeEdge (n₁ n₂ : Node) : Node × Node :=
+  if n₁.id ≤ n₂.id then (n₁, n₂) else (n₂, n₁)
 
 -- ============================================================================
 -- SPEC LAYER — Prop-based, for proving theorems
@@ -31,10 +38,14 @@ deriving Repr, DecidableEq, BEq, Hashable
 
 section Spec
 
-/-- Abstract puzzle board: a set of nodes and a symmetric adjacency relation. -/
+/-- Abstract puzzle board: nodes and edges (normalized: fst.id ≤ snd.id). -/
 structure PuzzleSpec where
   nodes : List Node
-  adj : Node → Node → Prop
+  edges : List (Node × Node)
+
+/-- Two nodes are adjacent if their normalized edge is in the edge list. -/
+def Adjacent (spec : PuzzleSpec) (n₁ n₂ : Node) : Prop :=
+  normalizeEdge n₁ n₂ ∈ spec.edges
 
 /-- An assignment in the spec is a list of placements (domino, node, node). -/
 structure Placement where
@@ -45,11 +56,11 @@ deriving DecidableEq
 
 abbrev AssignmentSpec := List Placement
 
-/-- Two placed nodes are adjacent on the board. -/
+/-- Every placed domino sits on an edge. -/
 def DominoesPlacedAdjacently (spec : PuzzleSpec) (a : AssignmentSpec) : Prop :=
-  ∀ p ∈ a, spec.adj p.fst p.snd
+  ∀ p ∈ a, Adjacent spec p.fst p.snd
 
-/-- Every node in the board appears in exactly one placement. -/
+/-- Every node in the board appears in some placement. -/
 def CoversAllNodes (spec : PuzzleSpec) (a : AssignmentSpec) : Prop :=
   ∀ n ∈ spec.nodes, ∃ p ∈ a, (p.fst = n ∨ p.snd = n)
 
@@ -86,7 +97,7 @@ inductive ConstraintSpec where
   | sum   (ns : List Node) (target : Nat) (ty : SumConstraintType)
   | equiv (ns : List Node) (target : Nat)
 
-/-- Extract the value at a node, defaulting to 0 if unassigned (valid assignments cover all nodes). -/
+/-- Extract the value at a node, defaulting to 0 if unassigned. -/
 def nodeValueD (a : AssignmentSpec) (n : Node) : Nat :=
   (nodeValue a n).getD 0
 
@@ -111,20 +122,19 @@ end Spec
 
 section Impl
 
+/-- Puzzle board as a list of nodes and a list of normalized edges. -/
 structure Pip where
-  board : Std.HashMap Node (Std.HashSet Node)
+  nodes : List Node
+  edges : List (Node × Node)
 deriving Repr
 
 def Pip.empty : Pip :=
-  { board := Std.HashMap.emptyWithCapacity 64 }
+  { nodes := [], edges := [] }
 
-def Pip.nodes (pip : Pip) : List Node :=
-  pip.board.keys
-
+/-- Check adjacency by normalizing and scanning the edge list. -/
 def adjacent (pip : Pip) (n₁ n₂ : Node) : Bool :=
-  match pip.board.get? n₁ with
-  | some neighbors => neighbors.contains n₂
-  | none => false
+  let (a, b) := normalizeEdge n₁ n₂
+  pip.edges.any (λ (x, y) => x == a && y == b)
 
 abbrev AssignmentImpl := List (Domino × Node × Node)
 
@@ -136,9 +146,8 @@ def assignedNodes (a : AssignmentImpl) : List Node :=
 
 def coversAllNodesImpl (pip : Pip) (a : AssignmentImpl) : Bool :=
   let nodes := assignedNodes a
-  let boardNodes := pip.nodes
-  boardNodes.all (λ n => nodes.contains n) &&
-  nodes.length == boardNodes.length
+  pip.nodes.all (λ n => nodes.contains n) &&
+  nodes.length == pip.nodes.length
 
 def noOverlapImpl (a : AssignmentImpl) : Bool :=
   let nodes := assignedNodes a
@@ -156,14 +165,22 @@ inductive Constraint where
   | equiv (ns : List Node) (c : Nat)
 deriving Repr, BEq, Hashable
 
-def checkConstraint (val : Node → Nat) : Constraint → Bool
-  | .sum ns target .eq  => (ns.map val).sum == target
-  | .sum ns target .lt  => (ns.map val).sum < target
-  | .sum ns target .gt  => (ns.map val).sum > target
-  | .equiv ns target    => ns.all (λ n => val n == target)
+def nodeValueImpl (a : AssignmentImpl) (n : Node) : Nat :=
+  match a.find? (λ (_, n₁, _) => n₁ == n) with
+  | some (d, _, _) => d.left
+  | none =>
+    match a.find? (λ (_, _, n₂) => n₂ == n) with
+    | some (d, _, _) => d.right
+    | none => 0
 
-def checkAllConstraints (val : Node → Nat) (cs : List Constraint) : Bool :=
-  cs.all (checkConstraint val)
+def checkConstraint (a : AssignmentImpl) : Constraint → Bool
+  | .sum ns target .eq  => (ns.map (nodeValueImpl a)).sum == target
+  | .sum ns target .lt  => (ns.map (nodeValueImpl a)).sum < target
+  | .sum ns target .gt  => (ns.map (nodeValueImpl a)).sum > target
+  | .equiv ns target    => ns.all (λ n => nodeValueImpl a n == target)
+
+def checkAllConstraints (a : AssignmentImpl) (cs : List Constraint) : Bool :=
+  cs.all (checkConstraint a)
 
 end Impl
 
@@ -173,17 +190,17 @@ end Impl
 
 section Bridge
 
-/-- Convert implementation board to spec adjacency relation. -/
+/-- Convert implementation board to spec. Trivial — same structure. -/
 def Pip.toSpec (pip : Pip) : PuzzleSpec where
   nodes := pip.nodes
-  adj n₁ n₂ := adjacent pip n₁ n₂ = true
+  edges := pip.edges
 
 /-- Convert implementation assignment to spec assignment. -/
 def toAssignmentSpec (a : AssignmentImpl) : AssignmentSpec :=
   a.map (λ (d, n₁, n₂) => { domino := d, fst := n₁, snd := n₂ })
 
--- The key bridge theorem to prove:
--- the Bool implementation decides the Prop-based spec.
+-- The key bridge theorem: the Bool check decides the Prop-based spec.
+-- Since both layers now use the same edge list, this becomes nearly trivial.
 --
 -- theorem assignmentIsValid_correct (pip : Pip) (a : AssignmentImpl) :
 --     assignmentIsValid pip a = true ↔
