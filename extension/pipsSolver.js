@@ -1,5 +1,5 @@
 (() => {
-  function solve(state) {
+  function solve(state, options = {}) {
     const nodes = state?.board?.nodes ?? [];
     const dominoes = state?.dominoes ?? [];
     const constraints = state?.constraints ?? [];
@@ -9,9 +9,20 @@
 
     const graph = buildSolverGraph(nodes, constraints);
     const remainingDominoes = dominoes.map((domino, index) => ({ domino, index }));
-    const result = search(graph, remainingDominoes, new Map(), [], new Set());
+    const deadline = solverDeadline(options.timeoutMs);
+    const result = search(graph, remainingDominoes, new Map(), [], new Set(), deadline);
     if (!result) throw new Error("No solution found");
     return result;
+  }
+
+  function solverDeadline(timeoutMs) {
+    return Number.isFinite(timeoutMs) && timeoutMs > 0 ? performance.now() + timeoutMs : null;
+  }
+
+  function checkDeadline(deadline) {
+    if (deadline !== null && performance.now() > deadline) {
+      throw new Error("Timed out after 10 seconds");
+    }
   }
 
   function buildSolverGraph(nodes, constraints) {
@@ -49,7 +60,9 @@
     return domino.top === domino.bottom ? [first] : [first, second];
   }
 
-  function search(graph, remainingDominoes, valuesByNode, placements, usedNodes) {
+  function search(graph, remainingDominoes, valuesByNode, placements, usedNodes, deadline) {
+    checkDeadline(deadline);
+
     if (!remainingDominoes.length) {
       return usedNodes.size === graph.nodes.length && constraintsSatisfied(graph.constraints, valuesByNode)
         ? { placements, valuesByNode: Object.fromEntries(valuesByNode) }
@@ -83,7 +96,7 @@
 
           if (!hasDeadEnd(graph, usedNodes)) {
             const nextDominoes = withoutIndex(remainingDominoes, dominoIndex);
-            const result = search(graph, nextDominoes, valuesByNode, [...placements, placement], usedNodes);
+            const result = search(graph, nextDominoes, valuesByNode, [...placements, placement], usedNodes, deadline);
             if (result) return result;
           }
 

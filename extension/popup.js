@@ -2,6 +2,7 @@ let currentState = null;
 const LEAN_SERVER_STATE_URL = "http://127.0.0.1:8765/solve";
 const POPUP_STATE_KEY = "pipsHelper.popupState.v1";
 const TEST_RUN_KEY = "pipsHelper.testRun.v1";
+const TEST_SOLVE_TIMEOUT_MS = 10000;
 
 const readButton = document.querySelector("#readButton");
 const solveButton = document.querySelector("#solveButton");
@@ -317,7 +318,7 @@ async function runPuzzleTests() {
     const result = { label: testCase.label, ok: true, message: "" };
 
     try {
-      window.PipsSolver.solve(gameState);
+      window.PipsSolver.solve(gameState, { timeoutMs: TEST_SOLVE_TIMEOUT_MS });
       passed++;
     } catch (err) {
       result.ok = false;
