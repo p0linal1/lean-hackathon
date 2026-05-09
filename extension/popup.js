@@ -1,5 +1,7 @@
 let currentState = null;
 const LEAN_SERVER_STATE_URL = "http://127.0.0.1:8765/solve";
+const POPUP_STATE_KEY = "pipsHelper.popupState.v1";
+const TEST_RUN_KEY = "pipsHelper.testRun.v1";
 
 const readButton = document.querySelector("#readButton");
 const solveButton = document.querySelector("#solveButton");
@@ -11,12 +13,15 @@ const boardSection = document.querySelector("#board-section");
 const dominoesEl = document.querySelector("#dominoes");
 const dominoesSection = document.querySelector("#dominoes-section");
 const testSection = document.querySelector("#test-section");
+const testProgressEl = document.querySelector("#test-progress");
+const testProgressFillEl = document.querySelector("#test-progress-fill");
 const testResultsEl = document.querySelector("#test-results");
 const debugEl = document.querySelector("#debug");
 
 readButton.addEventListener("click", readPuzzle);
 solveButton.addEventListener("click", solvePuzzle);
 testButton.addEventListener("click", runPuzzleTests);
+restorePopupState();
 
 async function readPuzzle() {
   setStatus("Reading");
@@ -28,6 +33,7 @@ async function readPuzzle() {
     solveButton.disabled = !currentState?.board?.nodes?.length;
 
     renderState(currentState);
+    savePopupState({ currentState, solution: null, status: "Detected" });
     setStatus("Detected");
   } catch (error) {
     setStatus("Error");
@@ -40,18 +46,19 @@ function solvePuzzle() {
 
   setStatus("Solving");
 
-  // Temporary mock solution until solver is ready.
-  const mockSolution = {
-    valuesByNodeId: Object.fromEntries(
-      currentState.board.nodes.map((node, index) => [
-        node.id,
-        index % 7
-      ])
-    )
-  };
-
-  renderState(currentState, mockSolution);
-  setStatus("Solved");
+  try {
+    const solution = window.PipsSolver.solve(currentState);
+    renderState(currentState, { valuesByNodeId: solution.valuesByNode });
+    savePopupState({
+      currentState,
+      solution: { valuesByNodeId: solution.valuesByNode },
+      status: "Solved"
+    });
+    setStatus("Solved");
+  } catch (error) {
+    setStatus("Error");
+    debugEl.textContent = String(error?.message ?? error);
+  }
 }
 
 function renderState(state, solution = null) {
@@ -238,6 +245,8 @@ function puzzleToGameState(puzzle) {
       let constraint = null;
       if (region.type === "equals") {
         constraint = { type: "equal" };
+      } else if (region.type === "unequal") {
+        constraint = { type: "unequal" };
       } else if (region.type === "sum") {
         constraint = { type: "sum", sign: "=", value: region.target };
       } else if (region.type === "less") {
@@ -273,43 +282,146 @@ async function runPuzzleTests() {
   testResultsEl.innerHTML = "";
 
   const difficulties = ["easy_puzzle", "medium_puzzle", "hard_puzzle"];
-  let passed = 0;
-  let failed = 0;
-
-  for (const puzzle of puzzles) {
-    for (const difficulty of difficulties) {
-      const sub = puzzle[difficulty];
-      if (!sub) continue;
-
-      const label = `#${puzzle.id} ${difficulty.replace("_puzzle", "")}`;
-      const gameState = puzzleToGameState(sub);
-
-      const row = document.createElement("div");
-      row.className = "test-row";
-
-      try {
-        const res = await fetch(LEAN_SERVER_STATE_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(gameState)
-        });
-        const payload = await res.json();
-        const ok = res.ok && payload?.ok;
-        row.innerHTML = `<span class="test-badge ${ok ? "pass" : "fail"}">${ok ? "✓" : "✗"}</span> ${label}`;
-        if (ok) passed++; else failed++;
-      } catch (err) {
-        row.innerHTML = `<span class="test-badge fail">✗</span> ${label} — ${err.message}`;
-        failed++;
-      }
-
-      testResultsEl.appendChild(row);
-    }
-  }
-
+  const testCases = puzzles.flatMap((puzzle) =>
+    difficulties
+      .filter((difficulty) => puzzle[difficulty])
+      .map((difficulty) => ({
+        puzzle,
+        difficulty,
+        sub: puzzle[difficulty],
+        label: `#${puzzle.id} ${difficulty.replace("_puzzle", "")}`
+      }))
+  );
+  const total = testCases.length;
+  const savedRun = loadTestRun();
+  const shouldResume = savedRun?.total === total && savedRun.completed < total;
+  const rows = shouldResume ? savedRun.rows ?? [] : [];
+  let passed = rows.filter((row) => row.ok).length;
+  let failed = rows.filter((row) => !row.ok).length;
+  let completed = rows.length;
   const summary = document.createElement("div");
   summary.className = "test-summary";
-  summary.textContent = `${passed} passed, ${failed} failed`;
-  testResultsEl.prepend(summary);
+  summary.textContent = formatTestSummary(completed, total, passed, failed);
+  testResultsEl.appendChild(summary);
+  updateTestProgress(completed, total);
+  renderSavedTestRows(rows);
+
+  for (const testCase of testCases.slice(completed)) {
+    const gameState = puzzleToGameState(testCase.sub);
+
+    const result = { label: testCase.label, ok: true, message: "" };
+
+    try {
+      window.PipsSolver.solve(gameState);
+      passed++;
+    } catch (err) {
+      result.ok = false;
+      result.message = String(err?.message ?? err);
+      failed++;
+    }
+
+    completed++;
+    rows.push(result);
+    testResultsEl.appendChild(createTestRow(result));
+    summary.textContent = formatTestSummary(completed, total, passed, failed);
+    updateTestProgress(completed, total);
+    saveTestRun({ total, completed, rows });
+    await nextFrame();
+  }
+
+  summary.textContent = formatTestSummary(completed, total, passed, failed);
+  updateTestProgress(completed, total);
+  saveTestRun({ total, completed, rows });
 
   testButton.disabled = false;
+}
+
+function restorePopupState() {
+  const saved = loadJson(POPUP_STATE_KEY);
+  if (saved?.currentState?.board?.nodes) {
+    currentState = saved.currentState;
+    solveButton.disabled = false;
+    renderState(currentState, saved.solution ?? null);
+    setStatus(saved.status ?? "Detected");
+  }
+
+  const testRun = loadTestRun();
+  if (testRun?.rows?.length) {
+    testSection.classList.remove("hidden");
+    testResultsEl.innerHTML = "";
+    const passed = testRun.rows.filter((row) => row.ok).length;
+    const failed = testRun.rows.filter((row) => !row.ok).length;
+    const summary = document.createElement("div");
+    summary.className = "test-summary";
+    summary.textContent = formatTestSummary(testRun.completed, testRun.total, passed, failed);
+    testResultsEl.appendChild(summary);
+    updateTestProgress(testRun.completed, testRun.total);
+    renderSavedTestRows(testRun.rows);
+  }
+}
+
+function renderSavedTestRows(rows) {
+  for (const row of rows) {
+    testResultsEl.appendChild(createTestRow(row));
+  }
+}
+
+function createTestRow(result) {
+  const row = document.createElement("div");
+  row.className = "test-row";
+
+  const badge = document.createElement("span");
+  badge.className = `test-badge ${result.ok ? "pass" : "fail"}`;
+  badge.textContent = result.ok ? "✓" : "✗";
+  row.appendChild(badge);
+
+  const text = document.createElement("span");
+  text.textContent = result.ok ? result.label : `${result.label} — ${result.message}`;
+  row.appendChild(text);
+
+  return row;
+}
+
+function formatTestSummary(completed, total, passed, failed) {
+  return `${completed}/${total} solved, ${passed} passed, ${failed} failed`;
+}
+
+function loadTestRun() {
+  return loadJson(TEST_RUN_KEY);
+}
+
+function saveTestRun(testRun) {
+  saveJson(TEST_RUN_KEY, testRun);
+}
+
+function savePopupState(state) {
+  saveJson(POPUP_STATE_KEY, state);
+}
+
+function loadJson(key) {
+  try {
+    return JSON.parse(localStorage.getItem(key) || "null");
+  } catch {
+    return null;
+  }
+}
+
+function saveJson(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // The popup still works without persistence if extension storage is unavailable.
+  }
+}
+
+function updateTestProgress(completed, total) {
+  const percent = total ? Math.round((completed / total) * 100) : 0;
+  testProgressEl.classList.remove("hidden");
+  testProgressEl.setAttribute("aria-valuenow", String(percent));
+  testProgressEl.setAttribute("aria-label", `${completed} of ${total} puzzle tests complete`);
+  testProgressFillEl.style.width = `${percent}%`;
+}
+
+function nextFrame() {
+  return new Promise((resolve) => requestAnimationFrame(resolve));
 }

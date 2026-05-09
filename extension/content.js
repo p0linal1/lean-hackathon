@@ -247,7 +247,14 @@
 
     const symbol = labelElement.querySelector(`[class*="${CLASS_PARTS.regionSymbol}"]`);
     if (!symbol) return "";
-    const className = String(symbol.className || "");
+    const className = String(symbol.className || "").toLowerCase();
+    if (
+      className.includes("unequal") ||
+      className.includes("different") ||
+      className.includes("notequal") ||
+      className.includes("not-equal") ||
+      className.includes("not_equal")
+    ) return "!=";
     if (className.includes("equal")) return "=";
     if (className.includes("less")) return "<";
     if (className.includes("greater")) return ">";
@@ -336,8 +343,11 @@
   }
 
   function parseConstraint(text) {
-    const normalized = String(text || "").replace(/\s+/g, "");
+    const normalized = String(text || "").replace(/\s+/g, "").toLowerCase();
     if (normalized === "=") return { type: "equal" };
+    if (["!=", "≠", "<>", "unequal", "different", "notequal"].includes(normalized)) {
+      return { type: "unequal" };
+    }
 
     const match = normalized.match(/^([<>=])?(\d+)$/);
     if (!match) return null;

@@ -163,6 +163,26 @@ button:disabled {
 
 /* ── Test results ── */
 
+.test-progress {
+  height: 8px;
+  overflow: hidden;
+  background: #e5e7eb;
+  border-radius: 999px;
+  margin-bottom: 8px;
+}
+
+.test-progress.hidden {
+  display: none;
+}
+
+.test-progress-fill {
+  width: 0;
+  height: 100%;
+  background: #2563eb;
+  border-radius: inherit;
+  transition: width 0.12s ease;
+}
+
 #test-results {
   display: flex;
   flex-direction: column;

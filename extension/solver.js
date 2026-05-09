@@ -147,18 +147,7 @@
   }
 
   function solve(state) {
-    const nodes = state?.board?.nodes ?? [];
-    const dominoes = state?.dominoes ?? [];
-    const constraints = state?.constraints ?? [];
-
-    if (!nodes.length) throw new Error("No board nodes detected");
-    if (!dominoes.length) throw new Error("No dominoes detected");
-
-    const graph = buildSolverGraph(nodes, constraints);
-    const remainingDominoes = dominoes.map((domino, index) => ({ domino, index }));
-    const result = search(graph, remainingDominoes, new Map(), [], new Set());
-    if (!result) throw new Error("No solution found");
-    return result;
+    return window.PipsSolver.solve(state);
   }
 
   function buildSolverGraph(nodes, constraints) {
