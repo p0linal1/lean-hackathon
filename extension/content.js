@@ -1,6 +1,5 @@
 (() => {
   const LOG_PREFIX = "[NYT Pips]";
-  const LEAN_SERVER_URL = "http://127.0.0.1:8765/solve";
   const CLASS_PARTS = {
     boardContainer: "Board-module_boardContainer",
     board: "Board-module_droppable",
@@ -21,8 +20,6 @@
 
   let lastSnapshot = "";
   let pendingLog = 0;
-  let pendingSubmitSnapshot = "";
-  let submitInFlight = false;
 
   function byClassPart(part, root = document) {
     return Array.from(root.querySelectorAll(`[class*="${part}"]`));
@@ -448,6 +445,146 @@
     };
   }
 
+  function nodeIndex(id) {
+    const match = String(id || "").match(/^node-(\d+)$/);
+    return match ? Number(match[1]) : -1;
+  }
+
+  function sameTileValues(left, right) {
+    return left.length === 2 &&
+      right.length === 2 &&
+      ((left[0] === right[0] && left[1] === right[1]) ||
+        (left[0] === right[1] && left[1] === right[0]));
+  }
+
+  function placementValues(placement) {
+    return [
+      Number(placement?.values?.[placement.topNode]),
+      Number(placement?.values?.[placement.bottomNode])
+    ];
+  }
+
+  function findTrayDominoForPlacement(boardState, placement) {
+    const tray = findActiveTrayElement(boardState);
+    if (!tray) throw new Error("No active Pips tray found");
+
+    const wanted = placementValues(placement);
+    const candidates = byClassTokenPrefix(CLASS_PARTS.domino, tray)
+      .filter(isEffectivelyVisible)
+      .map((domino) => ({
+        domino,
+        values: byClassTokenPrefix(CLASS_PARTS.half, domino).map(readPipCount)
+      }))
+      .filter((candidate) => sameTileValues(candidate.values, wanted));
+
+    const exact = candidates.find((candidate) =>
+      candidate.values[0] === wanted[0] && candidate.values[1] === wanted[1]
+    );
+    return (exact || candidates[0])?.domino || null;
+  }
+
+  function centerOf(rect) {
+    return {
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2
+    };
+  }
+
+  function targetPointForPlacement(boardState, placement) {
+    const cells = directByClassTokenPrefix(boardState.element, CLASS_PARTS.cell);
+    const firstCell = cells[nodeIndex(placement.topNode)];
+    const secondCell = cells[nodeIndex(placement.bottomNode)];
+    if (!firstCell || !secondCell) {
+      throw new Error("Solved placement does not match the visible board");
+    }
+
+    const first = centerOf(firstCell.getBoundingClientRect());
+    const second = centerOf(secondCell.getBoundingClientRect());
+    return {
+      x: (first.x + second.x) / 2,
+      y: (first.y + second.y) / 2
+    };
+  }
+
+  function pointerEventInit(point, type) {
+    return {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      clientX: point.x,
+      clientY: point.y,
+      screenX: point.x,
+      screenY: point.y,
+      pointerId: 1,
+      pointerType: "mouse",
+      isPrimary: true,
+      button: 0,
+      buttons: type === "pointerup" || type === "mouseup" ? 0 : 1
+    };
+  }
+
+  function dispatchPointerEvent(target, type, point) {
+    try {
+      target.dispatchEvent(new PointerEvent(type, pointerEventInit(point, type)));
+    } catch {
+      target.dispatchEvent(new MouseEvent(type.replace(/^pointer/, "mouse"), pointerEventInit(point, type)));
+    }
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function dragDominoToPoint(domino, point) {
+    const start = centerOf(domino.getBoundingClientRect());
+    const startTarget = document.elementFromPoint(start.x, start.y) || domino;
+
+    dispatchPointerEvent(startTarget, "pointerover", start);
+    dispatchPointerEvent(startTarget, "pointermove", start);
+    dispatchPointerEvent(startTarget, "pointerdown", start);
+    dispatchPointerEvent(startTarget, "mousedown", start);
+
+    const steps = 10;
+    for (let step = 1; step <= steps; step += 1) {
+      const current = {
+        x: start.x + ((point.x - start.x) * step) / steps,
+        y: start.y + ((point.y - start.y) * step) / steps
+      };
+      const moveTarget = document.elementFromPoint(current.x, current.y) || document;
+      dispatchPointerEvent(moveTarget, "pointermove", current);
+      dispatchPointerEvent(moveTarget, "mousemove", current);
+      await sleep(16);
+    }
+
+    const endTarget = document.elementFromPoint(point.x, point.y) || document;
+    dispatchPointerEvent(endTarget, "pointerup", point);
+    dispatchPointerEvent(endTarget, "mouseup", point);
+    await sleep(80);
+  }
+
+  async function placeSolvedPlacement(placement) {
+    const boardState = readBoard();
+    if (!boardState?.element) throw new Error("No active Pips board found");
+
+    const domino = findTrayDominoForPlacement(boardState, placement);
+    if (!domino) {
+      const values = placementValues(placement).join("-");
+      throw new Error(`No available ${values} domino found in the tray`);
+    }
+
+    domino.scrollIntoView({ block: "center", inline: "center" });
+    await sleep(30);
+    await dragDominoToPoint(domino, targetPointForPlacement(boardState, placement));
+    scheduleLog("placed domino");
+  }
+
+  async function placeSolvedPlacements(placements) {
+    for (const placement of placements || []) {
+      await placeSolvedPlacement(placement);
+      await sleep(90);
+    }
+  }
+
   function serializableBoard(boardState) {
     return boardState
       ? {
@@ -463,37 +600,6 @@
     return state;
   }
 
-  async function submitState(snapshot, reason) {
-    pendingSubmitSnapshot = snapshot;
-    if (submitInFlight) return;
-
-    while (pendingSubmitSnapshot) {
-      const snapshotToSubmit = pendingSubmitSnapshot;
-      pendingSubmitSnapshot = "";
-      submitInFlight = true;
-
-      try {
-        const response = await fetch(LEAN_SERVER_URL, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: snapshotToSubmit
-        });
-
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-
-        console.info(`${LOG_PREFIX} submitted state to Lean server (${reason})`);
-      } catch (error) {
-        console.warn(`${LOG_PREFIX} failed to submit state to Lean server`, error);
-      } finally {
-        submitInFlight = false;
-      }
-    }
-  }
-
   function logState(reason) {
     const state = readGameState();
     const cleanState = serializable(state);
@@ -502,17 +608,6 @@
 
     lastSnapshot = snapshot;
     window.__nytPipsState = cleanState;
-
-    console.groupCollapsed(`${LOG_PREFIX} game state (${reason})`);
-    console.log("state", cleanState);
-    console.log("board", cleanState.board);
-    console.log("dominoes", cleanState.dominoes);
-    console.log("dominoNodeMap", cleanState.dominoNodeMap);
-    console.log("constraints", cleanState.constraints);
-    console.table(cleanState.dominoes);
-    console.groupEnd();
-
-    submitState(snapshot, reason);
   }
 
   function scheduleLog(reason) {
@@ -536,14 +631,27 @@
     return state;
   };
 
-  window.__nytPipsSubmitState = () => {
-    const state = serializable(readGameState());
-    const snapshot = JSON.stringify(state);
-    submitState(snapshot, "manual submit");
-    return state;
-  };
-
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type === "PLACE_PIPS_PLACEMENT") {
+      placeSolvedPlacement(message.placement)
+        .then(() => sendResponse({ ok: true }))
+        .catch((error) => sendResponse({
+          ok: false,
+          error: String(error?.message ?? error)
+        }));
+      return true;
+    }
+
+    if (message?.type === "PLACE_PIPS_SOLUTION") {
+      placeSolvedPlacements(message.placements)
+        .then(() => sendResponse({ ok: true }))
+        .catch((error) => sendResponse({
+          ok: false,
+          error: String(error?.message ?? error)
+        }));
+      return true;
+    }
+
     if (message?.type !== "READ_PIPS_STATE") return false;
 
     try {

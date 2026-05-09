@@ -212,24 +212,23 @@ def handleRequest (stateRef : IO.Ref (Option Lean.Json)) (method path body : Str
     | .error err =>
       pure <| errorResponse "400 Bad Request" s!"Invalid JSON body: {err}"
     | .ok json =>
-      stateRef.set (some json)
-      match PipsConvert.parseFrontendState json with
-      | .error parseErr =>
-        IO.eprintln s!"[lean-http-server] parse error: {parseErr}"
-        pure <| jsonResponse "200 OK" <| .mkObj
-          [ ("ok",         false)
-          , ("parseError", .str parseErr)
-          , ("solvedState", json)
-          ]
-      | .ok (pip, dominoes, constraints) =>
-        IO.println s!"[lean-http-server] parsed: {pip.nodes.length} nodes, \
-          {pip.edges.length} edges, {dominoes.length} dominoes, \
-          {constraints.length} constraints"
-        pure <| jsonResponse "200 OK" <| .mkObj
-          [ ("ok",          true)
-          , ("leanState",   PipsConvert.toResponseJson pip dominoes constraints)
-          , ("solvedState", json)
-          ]
+      match json with
+      | .obj _ =>
+        stateRef.set (some json)
+        match PipsConvert.parseFrontendState json with
+        | .error parseErr =>
+          pure <| errorResponse "400 Bad Request" parseErr
+        | .ok (pip, dominoes, constraints) =>
+          IO.println s!"[lean-http-server] parsed: {pip.nodes.length} nodes, \
+            {pip.edges.length} edges, {dominoes.length} dominoes, \
+            {constraints.length} constraints"
+          pure <| jsonResponse "200 OK" <| .mkObj
+            [ ("ok",          true)
+            , ("leanState",   PipsConvert.toResponseJson pip dominoes constraints)
+            , ("solvedState", json)
+            ]
+      | _ =>
+        pure <| errorResponse "400 Bad Request" "JSON body must be an object"
   else if method = "GET" && path = "/solve" then
     match ← stateRef.get with
     | some json =>

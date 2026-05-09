@@ -3,24 +3,25 @@ const LEAN_SERVER_STATE_URL = "http://127.0.0.1:8765/solve";
 const POPUP_STATE_KEY = "pipsHelper.popupState.v1";
 const TEST_RUN_KEY = "pipsHelper.testRun.v1";
 const TEST_SOLVE_TIMEOUT_MS = 10000;
+const STATUS_CLASSES = [
+  "reading",
+  "detected",
+  "solving",
+  "solved",
+  "error"
+];
 
-const readButton = document.querySelector("#readButton");
 const solveButton = document.querySelector("#solveButton");
 const testButton = document.querySelector("#testButton");
 const statusEl = document.querySelector("#status");
-const summaryEl = document.querySelector("#summary");
 const boardEl = document.querySelector("#board");
 const boardSection = document.querySelector("#board-section");
-const dominoesEl = document.querySelector("#dominoes");
-const dominoesSection = document.querySelector("#dominoes-section");
 const testSection = document.querySelector("#test-section");
 const testProgressEl = document.querySelector("#test-progress");
 const testProgressFillEl = document.querySelector("#test-progress-fill");
 const testFailuresEl = document.querySelector("#test-failures");
 const testResultsEl = document.querySelector("#test-results");
-const debugEl = document.querySelector("#debug");
 
-readButton.addEventListener("click", readPuzzle);
 solveButton.addEventListener("click", solvePuzzle);
 testButton.addEventListener("click", runPuzzleTests);
 initializePopup();
@@ -44,7 +45,7 @@ async function readPuzzle(options = {}) {
     setStatus("Detected");
   } catch (error) {
     if (!options.preserveOnError) setStatus("Error");
-    debugEl.textContent = String(error?.message ?? error);
+    console.warn("[Pips Helper]", error);
   }
 }
 
@@ -55,40 +56,24 @@ function solvePuzzle() {
 
   try {
     const solution = window.PipsSolver.solve(currentState);
-    renderState(currentState, { valuesByNodeId: solution.valuesByNode });
+    renderState(currentState, solution);
     savePopupState({
       currentState,
-      solution: { valuesByNodeId: solution.valuesByNode },
+      solution,
       status: "Solved"
     });
     setStatus("Solved");
   } catch (error) {
     setStatus("Error");
-    debugEl.textContent = String(error?.message ?? error);
+    console.warn("[Pips Helper]", error);
   }
 }
 
 function renderState(state, solution = null) {
   const board = state.board;
-  const activeNodeCount = board?.nodes?.length ?? 0;
-
-  const pills = [
-    `Board: ${board?.rows ?? "?"} × ${board?.columns ?? "?"}`,
-    `Cells: ${activeNodeCount}`,
-    `Constraints: ${state.constraints?.length ?? 0}`,
-    `Dominoes: ${state.dominoes?.length ?? 0}`,
-  ];
-  summaryEl.innerHTML = pills
-    .map(text => `<span class="summary-pill">${text}</span>`)
-    .join("");
 
   renderBoard(board, solution);
-  renderDominoes(state.dominoes ?? []);
-
   boardSection.classList.toggle("hidden", !Array.isArray(board?.nodes));
-  dominoesSection.classList.toggle("hidden", !(state.dominoes?.length));
-
-  debugEl.textContent = JSON.stringify(state, null, 2);
 }
 
 function renderBoard(board, solution) {
@@ -99,35 +84,120 @@ function renderBoard(board, solution) {
     return;
   }
 
-  const nodeSet = new Set(board.nodes);
-  const dimensions = boardDimensions(board);
+  const nodesByIndex = new Map(
+    board.nodes.map((node) => [nodeGridIndex(node, board), node])
+  );
+  const nodesById = new Map(board.nodes.map((node) => [node.id, node]));
+  const dimensions = boardDimensions(board, nodesByIndex);
 
-  boardEl.style.gridTemplateColumns = `repeat(${dimensions.columns}, 1fr)`;
+  boardEl.style.gridTemplateColumns = `repeat(${dimensions.columns}, var(--popup-board-cell-size))`;
+  boardEl.style.gridTemplateRows = `repeat(${dimensions.rows}, var(--popup-board-cell-size))`;
 
-  for (let index = 0; index < dimensions.rows * dimensions.columns; index += 1) {
-    const hasNode = nodeSet.has(index);
-    const div = document.createElement("div");
-    div.className = hasNode ? "cell" : "cell hidden";
-    div.textContent = hasNode && solution?.valuesByNodeId?.[index] !== undefined
-      ? solution.valuesByNodeId[index]
-      : "";
+  if (!(solution?.placements?.length)) {
+    for (const node of board.nodes) {
+      const div = document.createElement("div");
+      div.className = "cell";
+      div.style.gridColumn = `${node.column + 1}`;
+      div.style.gridRow = `${node.row + 1}`;
 
-    boardEl.appendChild(div);
+      boardEl.appendChild(div);
+    }
+  }
+
+  for (const placement of solution?.placements ?? []) {
+    const domino = renderDominoPlacement(placement, nodesById);
+    if (domino) boardEl.appendChild(domino);
   }
 }
 
-function renderDominoes(dominoes) {
-  dominoesEl.innerHTML = "";
+function renderDominoPlacement(placement, nodesById) {
+  const firstNode = nodesById.get(placement.topNode);
+  const secondNode = nodesById.get(placement.bottomNode);
+  if (!firstNode || !secondNode) return null;
 
-  for (const domino of dominoes) {
-    const tile = document.createElement("div");
-    tile.className = "domino";
-    tile.textContent = `${domino.top} | ${domino.bottom}`;
-    dominoesEl.appendChild(tile);
+  const orientation = dominoOrientation(placement.topNode, placement.bottomNode);
+  const orderedNodes = orderedPlacementNodes(firstNode, secondNode, orientation);
+  const domino = document.createElement("div");
+  domino.className = `Domino-module_domino__hSfP4 solved-domino ${orientation}`;
+
+  if (orientation === "horizontal") {
+    const column = Math.min(firstNode.column, secondNode.column) + 1;
+    domino.style.gridColumn = `${column} / span 2`;
+    domino.style.gridRow = `${orderedNodes[0].row + 1}`;
+  } else {
+    const row = Math.min(firstNode.row, secondNode.row) + 1;
+    domino.style.gridColumn = `${orderedNodes[0].column + 1}`;
+    domino.style.gridRow = `${row} / span 2`;
   }
+
+  domino.append(
+    renderHalfDomino(placement.values[orderedNodes[0].id], true),
+    renderHalfDomino(placement.values[orderedNodes[1].id], false)
+  );
+
+  return domino;
 }
 
-const STATUS_CLASSES = ["reading", "detected", "solving", "solved", "error"];
+function orderedPlacementNodes(firstNode, secondNode, orientation) {
+  return [firstNode, secondNode].sort((left, right) => {
+    if (orientation === "horizontal") return left.column - right.column;
+    return left.row - right.row;
+  });
+}
+
+function renderHalfDomino(value, isFirst) {
+  const half = document.createElement("div");
+  half.className = [
+    "Domino-module_halfDomino__FWnOS",
+    isFirst ? "Domino-module_isFirst__qiM7f" : ""
+  ].filter(Boolean).join(" ");
+  half.setAttribute("aria-label", String(value));
+
+  const dots = document.createElement("div");
+  dots.className = `Domino-module_dotsWrapper__kkdAC domino-dots domino-dots-${value}`;
+
+  for (let i = 0; i < value; i += 1) {
+    const dot = document.createElement("span");
+    dot.className = `Domino-module_dot__z3BLH domino-dot ${dominoDotPositionClass(value, i)}`;
+    dots.appendChild(dot);
+  }
+
+  half.appendChild(dots);
+  return half;
+}
+
+function dominoDotPositionClass(value, index) {
+  if (value === 1) return "Domino-module_middle__0bq7B";
+  if (value === 2) return index === 0 ? "Domino-module_topLeft__6Ke73" : "Domino-module_bottomRight__d7pPA";
+  if (value === 3) return ["Domino-module_topLeft__6Ke73", "Domino-module_middle__0bq7B", "Domino-module_bottomRight__d7pPA"][index];
+  if (value === 4) return [
+    "Domino-module_topLeft__6Ke73",
+    "Domino-module_topRight__j3Pw9",
+    "Domino-module_bottomLeft__qjL6t",
+    "Domino-module_bottomRight__d7pPA"
+  ][index];
+  if (value === 5) return [
+    "Domino-module_topLeft__6Ke73",
+    "Domino-module_topRight__j3Pw9",
+    "Domino-module_middle__0bq7B",
+    "Domino-module_bottomLeft__qjL6t",
+    "Domino-module_bottomRight__d7pPA"
+  ][index];
+  return [
+    "Domino-module_topLeft__6Ke73",
+    "Domino-module_topRight__j3Pw9",
+    "Domino-module_middleLeft__L5amZ",
+    "Domino-module_middleRight__jjcVI",
+    "Domino-module_bottomLeft__qjL6t",
+    "Domino-module_bottomRight__d7pPA"
+  ][index] ?? "";
+}
+
+function dominoOrientation(firstNodeId, secondNodeId) {
+  const first = nodeIndex(firstNodeId);
+  const second = nodeIndex(secondNodeId);
+  return Math.abs(first - second) === 1 ? "horizontal" : "vertical";
+}
 
 function setStatus(status) {
   statusEl.textContent = status;
@@ -136,6 +206,10 @@ function setStatus(status) {
 }
 
 async function readStateFromCurrentTab() {
+  return sendMessageToCurrentTab({ type: "READ_PIPS_STATE" });
+}
+
+async function sendMessageToCurrentTab(message) {
   const [tab] = await chrome.tabs.query({
     active: true,
     currentWindow: true
@@ -145,12 +219,10 @@ async function readStateFromCurrentTab() {
     throw new Error("No active tab found");
   }
 
-  const response = await chrome.tabs.sendMessage(tab.id, {
-    type: "READ_PIPS_STATE"
-  });
+  const response = await chrome.tabs.sendMessage(tab.id, message);
 
   if (!response?.ok) {
-    throw new Error(response?.error || "Could not read state from the NYT tab");
+    throw new Error(response?.error || "The NYT tab did not accept the request");
   }
 
   return response;
@@ -175,7 +247,20 @@ async function readStateFromLeanServer() {
   };
 }
 
-function boardDimensions(board) {
+function nodeGridIndex(node, board) {
+  if (Number.isFinite(node.index)) return node.index;
+  if (Number.isFinite(node.row) && Number.isFinite(node.column) && board.columns) {
+    return node.row * board.columns + node.column;
+  }
+  return nodeIndex(node.id);
+}
+
+function nodeIndex(id) {
+  const match = String(id).match(/^node-(\d+)$/);
+  return match ? Number(match[1]) : -1;
+}
+
+function boardDimensions(board, nodesByIndex) {
   if (board.rows && board.columns) {
     return {
       rows: board.rows,
@@ -183,7 +268,7 @@ function boardDimensions(board) {
     };
   }
 
-  const maxIndex = Math.max(...(board.nodes ?? []), 0);
+  const maxIndex = Math.max(...nodesByIndex.keys(), 0);
   const side = Math.ceil(Math.sqrt(maxIndex + 1));
 
   return {
@@ -211,16 +296,18 @@ function puzzleToGameState(puzzle) {
   const rows = Math.max(...activeCells.map((c) => c.row)) + 1;
   const columns = Math.max(...activeCells.map((c) => c.col)) + 1;
 
-  const nodeIndex = (row, col) => row * columns + col;
+  const nodeId = (row, col) => `node-${row * columns + col}`;
 
-  const nodes = activeCells.map(({ row, col }) => nodeIndex(row, col));
-
-  const edges = [];
-  for (const { row, col } of activeCells) {
-    const id = nodeIndex(row, col);
-    if (activeSet.has(`${row},${col + 1}`)) edges.push([id, nodeIndex(row, col + 1)]);
-    if (activeSet.has(`${row + 1},${col}`)) edges.push([id, nodeIndex(row + 1, col)]);
-  }
+  const nodes = activeCells.map(({ row, col }) => ({
+    id: nodeId(row, col),
+    index: row * columns + col,
+    row,
+    column: col,
+    left: activeSet.has(`${row},${col - 1}`) ? nodeId(row, col - 1) : null,
+    right: activeSet.has(`${row},${col + 1}`) ? nodeId(row, col + 1) : null,
+    up: activeSet.has(`${row - 1},${col}`) ? nodeId(row - 1, col) : null,
+    down: activeSet.has(`${row + 1},${col}`) ? nodeId(row + 1, col) : null
+  }));
 
   const dominoes = (puzzle.dominoes ?? []).map(([top, bottom], i) => ({
     id: `domino-${i + 1}`,
@@ -231,7 +318,7 @@ function puzzleToGameState(puzzle) {
   const constraints = (puzzle.regions ?? [])
     .filter((r) => r.type !== "empty")
     .map((region) => {
-      const regionNodes = (region.indices ?? []).map(([row, col]) => nodeIndex(row, col));
+      const nodes = (region.indices ?? []).map(([row, col]) => nodeId(row, col));
       let constraint = null;
       if (region.type === "equals") {
         constraint = { type: "equal" };
@@ -244,11 +331,11 @@ function puzzleToGameState(puzzle) {
       } else if (region.type === "greater") {
         constraint = { type: "sum", sign: ">", value: region.target };
       }
-      return constraint ? { nodes: regionNodes, constraint } : null;
+      return constraint ? { nodes, constraint } : null;
     })
     .filter(Boolean);
 
-  return { board: { rows, columns, nodes, edges }, dominoes, constraints };
+  return { board: { rows, columns, nodes }, dominoes, constraints };
 }
 
 // ── Test runner ───────────────────────────────────────────────────────────────

@@ -3,13 +3,16 @@
   "name": "NYT Pips State Logger",
   "version": "0.1.0",
   "description": "Reads the NYT Pips board shape, constraints, and available dominoes.",
-  "permissions": ["activeTab"],
+  "permissions": ["activeTab", "sidePanel"],
   "host_permissions": [
     "http://127.0.0.1:8765/*"
   ],
   "action": {
     "default_title": "Pips Helper",
     "default_popup": "popup.html"
+  },
+  "side_panel": {
+    "default_path": "popup.html"
   },
   "web_accessible_resources": [
     {
@@ -23,7 +26,7 @@
         "https://www.nytimes.com/games/pips*",
         "https://www.nytimes.com/puzzles/pips*"
       ],
-      "js": ["content.js", "pipsSolver.js", "solver.js"],
+      "js": ["content.js"],
       "run_at": "document_idle"
     }
   ]

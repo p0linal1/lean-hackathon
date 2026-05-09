@@ -14,6 +14,7 @@
       <div class="button-row">
         <button id="readButton">Read puzzle</button>
         <button id="solveButton" disabled>Solve</button>
+        <button id="fillAllButton" disabled>Fill all</button>
         <button id="testButton">Test puzzles</button>
       </div>
 
@@ -26,22 +27,10 @@
         <div id="test-results"></div>
       </div>
 
-      <section id="summary"></section>
-
       <div id="board-section" class="panel hidden">
         <div class="panel-label">Board</div>
         <div id="board"></div>
       </div>
-
-      <div id="dominoes-section" class="panel hidden">
-        <div class="panel-label">Dominoes</div>
-        <div id="dominoes"></div>
-      </div>
-
-      <details>
-        <summary>Debug JSON</summary>
-        <pre id="debug"></pre>
-      </details>
     </main>
 
     <script src="pipsSolver.js"></script>
