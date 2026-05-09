@@ -108,6 +108,8 @@ deriving Repr, DecidableEq, BEq, Hashable
 inductive ConstraintSpec where
   | sum   (ns : List Node) (target : Nat) (ty : SumConstraintType)
   | equiv (ns : List Node)
+  /-- All nodes in the region have pairwise distinct values. -/
+  | neq   (ns : List Node)
 
 def SatisfiesConstraint (a : AssignmentSpec) : ConstraintSpec → Prop
   | .sum ns target .eq  => (∀ n ∈ ns, (nodeValue a n).isSome) ∧
@@ -118,6 +120,8 @@ def SatisfiesConstraint (a : AssignmentSpec) : ConstraintSpec → Prop
                             (ns.filterMap (nodeValue a)).sum > target
   | .equiv ns           => (∀ n ∈ ns, (nodeValue a n).isSome) ∧
                             ∃ v, ∀ n ∈ ns, nodeValue a n = some v
+  | .neq ns             => (∀ n ∈ ns, (nodeValue a n).isSome) ∧
+                            (ns.filterMap (nodeValue a)).Nodup
 
 def SatisfiesAllConstraints (a : AssignmentSpec) (cs : List ConstraintSpec) : Prop :=
   ∀ c ∈ cs, SatisfiesConstraint a c
@@ -172,8 +176,10 @@ def assignmentIsValid (pip : Pip) (a : AssignmentImpl) : Bool :=
 -- Constraint checking (implementation)
 
 inductive Constraint where
-  | sum   (ns : List Node) (c : Nat) (t : SumConstraintType)
-  | equiv (ns : List Node)
+  | sum    (ns : List Node) (c : Nat) (t : SumConstraintType)
+  | equiv  (ns : List Node)
+  /-- All nodes in the region have pairwise distinct values. -/
+  | allNeq (ns : List Node)
 deriving Repr, BEq, Hashable
 
 def nodeValueImpl (a : AssignmentImpl) (n : Node) : Option Nat :=
@@ -200,6 +206,9 @@ def checkConstraint (a : AssignmentImpl) : Constraint → Bool
     match vals with
     | [] => true
     | v :: rest => rest.all (· == v)
+  | .allNeq ns          =>
+    let vals := ns.filterMap (nodeValueImpl a)
+    vals.length == ns.length && vals.eraseDups.length == vals.length
 
 def checkAllConstraints (a : AssignmentImpl) (cs : List Constraint) : Bool :=
   cs.all (checkConstraint a)
