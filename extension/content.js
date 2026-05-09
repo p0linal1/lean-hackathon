@@ -1,5 +1,6 @@
 (() => {
   const LOG_PREFIX = "[NYT Pips]";
+  const LEAN_SERVER_URL = "http://127.0.0.1:8765/game-state";
   const CLASS_PARTS = {
     boardContainer: "Board-module_boardContainer",
     board: "Board-module_droppable",
@@ -20,6 +21,8 @@
 
   let lastSnapshot = "";
   let pendingLog = 0;
+  let pendingSubmitSnapshot = "";
+  let submitInFlight = false;
 
   function byClassPart(part, root = document) {
     return Array.from(root.querySelectorAll(`[class*="${part}"]`));
@@ -156,7 +159,7 @@
   }
 
   function boardNodeId(index) {
-    return `cell-${index}`;
+    return `node-${index}`;
   }
 
   function neighborNodeIds(cells, cell, columns) {
@@ -427,14 +430,17 @@
         const values = halves.map(readPipCount);
         const idMatch = halves[0]?.id?.match(/^domino-(\d+)-/);
         const id = `domino-${idMatch ? Number(idMatch[1]) : trayIndex + 1}`;
-        const nodes = halves.map((half, halfIndex) => half.id || `${id}-${halfIndex === 0 ? "top" : "bottom"}`);
+        const nodes = [`${id}-top`, `${id}-bottom`];
 
         dominoes.push({
           id,
           top: values[0] ?? 0,
           bottom: values[1] ?? 0
         });
-        dominoNodeMap[id] = nodes;
+        dominoNodeMap[id] = {
+          Top: nodes[0] ?? null,
+          Bottom: nodes[1] ?? null
+        };
       });
 
     return { dominoes, dominoNodeMap };
@@ -463,6 +469,37 @@
     return state;
   }
 
+  async function submitState(snapshot, reason) {
+    pendingSubmitSnapshot = snapshot;
+    if (submitInFlight) return;
+
+    while (pendingSubmitSnapshot) {
+      const snapshotToSubmit = pendingSubmitSnapshot;
+      pendingSubmitSnapshot = "";
+      submitInFlight = true;
+
+      try {
+        const response = await fetch(LEAN_SERVER_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: snapshotToSubmit
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        console.info(`${LOG_PREFIX} submitted state to Lean server (${reason})`);
+      } catch (error) {
+        console.warn(`${LOG_PREFIX} failed to submit state to Lean server`, error);
+      } finally {
+        submitInFlight = false;
+      }
+    }
+  }
+
   function logState(reason) {
     const state = readGameState();
     const cleanState = serializable(state);
@@ -480,6 +517,8 @@
     console.log("constraints", cleanState.constraints);
     console.table(cleanState.dominoes);
     console.groupEnd();
+
+    submitState(snapshot, reason);
   }
 
   function scheduleLog(reason) {
@@ -500,6 +539,13 @@
   window.__nytPipsReadState = () => {
     const state = serializable(readGameState());
     console.log(`${LOG_PREFIX} manual read`, state);
+    return state;
+  };
+
+  window.__nytPipsSubmitState = () => {
+    const state = serializable(readGameState());
+    const snapshot = JSON.stringify(state);
+    submitState(snapshot, "manual submit");
     return state;
   };
 })();

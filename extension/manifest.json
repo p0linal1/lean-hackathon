@@ -3,6 +3,9 @@
   "name": "NYT Pips State Logger",
   "version": "0.1.0",
   "description": "Logs the NYT Pips board shape, constraints, and available dominoes to the console.",
+  "host_permissions": [
+    "http://127.0.0.1:8765/*"
+  ],
   "content_scripts": [
     {
       "matches": [

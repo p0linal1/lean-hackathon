@@ -57,6 +57,8 @@ def handleRequest (stateRef : IO.Ref (Option Lean.Json)) (method path body : Str
       pure <| errorResponse "400 Bad Request" s!"Invalid JSON body: {err}"
     | .ok json =>
       stateRef.set (some json)
+      IO.println "[lean-http-server] received game state:"
+      IO.println json.pretty
       pure <| jsonResponse "200 OK" <| .mkObj [("ok", true), ("storedState", json)]
   else if method = "GET" && path = "/game-state" then
     match ← stateRef.get with

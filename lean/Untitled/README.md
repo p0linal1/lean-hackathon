@@ -26,6 +26,6 @@ curl http://127.0.0.1:8765/health
 curl http://127.0.0.1:8765/lean/version
 curl -X POST http://127.0.0.1:8765/game-state \
   -H "Content-Type: application/json" \
-  --data '{"board":{"nodes":[{"id":"cell-0"}]},"dominoes":[],"dominoNodeMap":{},"constraints":[]}'
+  --data '{"board":{"nodes":[{"id":"node-0"}]},"dominoes":[],"dominoNodeMap":{},"constraints":[]}'
 curl http://127.0.0.1:8765/game-state
 ```
