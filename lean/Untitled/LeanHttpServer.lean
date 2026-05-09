@@ -175,6 +175,7 @@ end PipsConvert
 namespace LeanHttpServer
 
 def defaultPort : UInt16 := UInt16.ofNat 8765
+def solveTimeoutMs : Nat := 10000
 
 def localhost (port : UInt16) : SocketAddress :=
   .v4 { addr := IPv4Addr.ofParts 127 0 0 1, port := port }
@@ -230,9 +231,9 @@ def handleRequest (stateRef : IO.Ref (Option Lean.Json)) (method path body : Str
           IO.println s!"[lean-http-server] parsed: {pip.nodes.length} nodes, \
             {pip.edges.length} edges, {dominoes.length} dominoes, \
             {constraints.length} constraints"
-          let result := solve pip dominoes constraints
+          let result ← solveTimed pip dominoes constraints solveTimeoutMs
           match result with
-          | some assignment =>
+          | .solved assignment =>
             IO.println s!"[lean-http-server] SOLVED! assignment has {assignment.length} placements"
             pure <| jsonResponse "200 OK" <| .mkObj
               [ ("ok",          true)
@@ -240,11 +241,20 @@ def handleRequest (stateRef : IO.Ref (Option Lean.Json)) (method path body : Str
               , ("leanState",   PipsConvert.toResponseJson pip dominoes constraints)
               , ("assignment",  PipsConvert.assignmentToJson assignment)
               ]
-          | none =>
+          | .unsolved =>
             IO.println "[lean-http-server] No solution found"
             pure <| jsonResponse "200 OK" <| .mkObj
               [ ("ok",          true)
               , ("solved",      false)
+              , ("leanState",   PipsConvert.toResponseJson pip dominoes constraints)
+              ]
+          | .timedOut =>
+            IO.println s!"[lean-http-server] Solver timed out after {solveTimeoutMs / 1000} seconds"
+            pure <| jsonResponse "200 OK" <| .mkObj
+              [ ("ok",          false)
+              , ("solved",      false)
+              , ("timedOut",    true)
+              , ("error",       s!"Lean server timed out after {solveTimeoutMs / 1000} seconds")
               , ("leanState",   PipsConvert.toResponseJson pip dominoes constraints)
               ]
       | _ =>
@@ -278,7 +288,7 @@ def handleClient (stateRef : IO.Ref (Option Lean.Json)) (client : Socket.Client)
 partial def serveLoop (stateRef : IO.Ref (Option Lean.Json)) (server : Socket.Server) : IO Unit := do
   try
     let client ← Async.block (Socket.Server.accept server)
-    handleClient stateRef client
+    discard <| IO.asTask (handleClient stateRef client) Task.Priority.dedicated
   catch err =>
     IO.eprintln s!"[lean-http-server] accept error: {err}"
   serveLoop stateRef server

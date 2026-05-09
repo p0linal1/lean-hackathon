@@ -74,6 +74,54 @@ def solveAux
 def solve (pip : Pip) (dominoes : List Domino) (cs : List Constraint) : Option AssignmentImpl :=
   solveAux pip cs dominoes []
 
+inductive TimedSolveResult where
+  | solved (assignment : AssignmentImpl)
+  | unsolved
+  | timedOut
+
+def deadlineExceeded (deadlineMs : Nat) : IO Bool := do
+  return (← IO.monoMsNow) >= deadlineMs
+
+partial def solveAuxTimed
+    (deadlineMs : Nat)
+    (pip : Pip)
+    (cs : List Constraint)
+    (remaining : List Domino)
+    (assignment : AssignmentImpl) : IO TimedSolveResult := do
+  if ← deadlineExceeded deadlineMs then
+    return .timedOut
+
+  if !checkConstraintsPartial assignment cs then
+    return .unsolved
+
+  match remaining with
+  | [] =>
+    if assignmentIsValid pip assignment && checkAllConstraints assignment cs then
+      return .solved assignment
+    else
+      return .unsolved
+  | domino :: rest =>
+    for (n₁, n₂) in uncoveredEdges pip assignment do
+      if ← deadlineExceeded deadlineMs then
+        return .timedOut
+
+      for placement in tryPlace domino n₁ n₂ do
+        match ← solveAuxTimed deadlineMs pip cs rest (placement :: assignment) with
+        | .solved assignment => return .solved assignment
+        | .timedOut => return .timedOut
+        | .unsolved => pure ()
+
+    return .unsolved
+
+/-- IO solver variant used by the HTTP server so long searches can release the server. -/
+def solveTimed
+    (pip : Pip)
+    (dominoes : List Domino)
+    (cs : List Constraint)
+    (timeoutMs : Nat) : IO TimedSolveResult := do
+  let startMs ← IO.monoMsNow
+  solveAuxTimed (startMs + timeoutMs) pip cs dominoes []
+
 -- ============================================================================
 -- SOLVER CORRECTNESS
 -- ============================================================================

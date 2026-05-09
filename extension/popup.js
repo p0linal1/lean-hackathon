@@ -1,8 +1,9 @@
 let currentState = null;
 const LEAN_SERVER_STATE_URL = "http://127.0.0.1:8765/solve";
 const POPUP_STATE_KEY = "pipsHelper.popupState.v1";
-const TEST_RUN_KEY = "pipsHelper.testRun.v1";
+const TEST_RUN_KEY = "pipsHelper.backendTestRun.v1";
 const TEST_SOLVE_TIMEOUT_MS = 10000;
+const TEST_SOLVE_CONCURRENCY = 10;
 const STATUS_CLASSES = [
   "reading",
   "detected",
@@ -14,6 +15,7 @@ const STATUS_CLASSES = [
 const solveButton = document.querySelector("#solveButton");
 const testButton = document.querySelector("#testButton");
 const statusEl = document.querySelector("#status");
+const solveSourceEl = document.querySelector("#solve-source");
 const boardEl = document.querySelector("#board");
 const boardSection = document.querySelector("#board-section");
 const testSection = document.querySelector("#test-section");
@@ -41,7 +43,8 @@ async function readPuzzle(options = {}) {
     solveButton.disabled = !currentState?.board?.nodes?.length;
 
     renderState(currentState);
-    savePopupState({ currentState, solution: null, status: "Detected" });
+    setSolveSource(null);
+    savePopupState({ currentState, solution: null, status: "Detected", solveSource: null });
     setStatus("Detected");
   } catch (error) {
     if (!options.preserveOnError) setStatus("Error");
@@ -55,15 +58,14 @@ async function solvePuzzle() {
   setStatus("Solving");
 
   try {
-    const solution = await solveWithBackend(currentState).catch((error) => {
-      console.warn("[Pips Helper] Backend solve failed, falling back to frontend solver", error);
-      return window.PipsSolver.solve(currentState);
-    });
+    const { solution, source } = await solveCurrentState(currentState);
+    setSolveSource(source);
     renderState(currentState, solution);
     savePopupState({
       currentState,
       solution,
-      status: "Solved"
+      status: "Solved",
+      solveSource: source
     });
     setStatus("Solved");
   } catch (error) {
@@ -72,23 +74,88 @@ async function solvePuzzle() {
   }
 }
 
-async function solveWithBackend(state) {
-  const response = await fetch(LEAN_SERVER_STATE_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(state)
-  });
+async function solveCurrentState(state) {
+  try {
+    return {
+      solution: await solveWithBackend(state),
+      source: "backend"
+    };
+  } catch (error) {
+    console.warn("[Pips Helper] Backend solve failed, falling back to frontend solver", error);
+    return {
+      solution: window.PipsSolver.solve(state),
+      source: "frontend"
+    };
+  }
+}
+
+async function solveWithBackend(state, options = {}) {
+  const timeoutMs = options.timeoutMs;
+  const controller = Number.isFinite(timeoutMs) && timeoutMs > 0
+    ? new AbortController()
+    : null;
+  const timeoutId = controller
+    ? setTimeout(() => controller.abort(), timeoutMs)
+    : null;
+
+  let response;
+  try {
+    response = await fetch(LEAN_SERVER_STATE_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(state),
+      signal: controller?.signal
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(`Lean server timed out after ${timeoutMs / 1000} seconds`);
+    }
+    throw error;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 
   if (!response.ok) {
     throw new Error(`Lean server returned HTTP ${response.status}`);
   }
 
   const payload = await response.json();
+  if (payload?.ok === false) {
+    throw new Error(payload.error || "Lean server returned an error response");
+  }
+
   if (payload?.solution?.placements?.length) return payload.solution;
   if (payload?.placements?.length) return payload;
+  if (payload?.solved === true) {
+    const solution = backendAssignmentToSolution(payload.assignment);
+    if (solution?.placements?.length) return solution;
+  }
+
   throw new Error("Lean server did not return a solved placement set");
+}
+
+function backendAssignmentToSolution(assignment) {
+  if (!Array.isArray(assignment) || !assignment.length) return null;
+
+  const placements = assignment.map((entry, index) => ({
+    domino: {
+      id: `domino-${index + 1}`,
+      top: entry.domino.left,
+      bottom: entry.domino.right
+    },
+    topNode: entry.fst,
+    bottomNode: entry.snd,
+    values: {
+      [entry.fst]: entry.domino.left,
+      [entry.snd]: entry.domino.right
+    }
+  }));
+  const valuesByNode = {};
+  for (const placement of placements) Object.assign(valuesByNode, placement.values);
+
+  return { placements, valuesByNode };
 }
 
 function renderState(state, solution = null) {
@@ -224,6 +291,13 @@ function setStatus(status) {
   statusEl.textContent = status;
   STATUS_CLASSES.forEach(cls => statusEl.classList.remove(cls));
   statusEl.classList.add(status.toLowerCase());
+}
+
+function setSolveSource(source) {
+  solveSourceEl.classList.toggle("hidden", !source);
+  solveSourceEl.classList.toggle("backend", source === "backend");
+  solveSourceEl.classList.toggle("frontend", source === "frontend");
+  solveSourceEl.textContent = source ? `Solved: ${source}` : "";
 }
 
 async function readStateFromCurrentTab() {
@@ -408,41 +482,58 @@ async function runPuzzleTests() {
   renderSavedTestRows(rows);
   renderFailureRows(rows);
 
-  for (const testCase of testCases.slice(completed)) {
-    const gameState = puzzleToGameState(testCase.sub);
+  const remainingCases = testCases.slice(completed);
+  let nextIndex = 0;
 
-    const result = {
-      label: testCase.label,
-      date: testCase.date,
-      difficulty: testCase.difficultyLabel,
-      ok: true,
-      message: ""
-    };
+  async function runNextTestCase() {
+    while (nextIndex < remainingCases.length) {
+      const testCase = remainingCases[nextIndex];
+      nextIndex++;
 
-    try {
-      window.PipsSolver.solve(gameState, { timeoutMs: TEST_SOLVE_TIMEOUT_MS });
-      passed++;
-    } catch (err) {
-      result.ok = false;
-      result.message = String(err?.message ?? err);
-      failed++;
+      const result = await runBackendPuzzleTest(testCase);
+      if (result.ok) passed++;
+      else failed++;
+
+      completed++;
+      rows.push(result);
+      testResultsEl.appendChild(createTestRow(result));
+      if (!result.ok) appendFailureRow(result);
+      summary.textContent = formatTestSummary(completed, total, passed, failed);
+      updateTestProgress(completed, total);
+      saveTestRun({ total, completed, rows });
+
+      await nextFrame();
     }
-
-    completed++;
-    rows.push(result);
-    testResultsEl.appendChild(createTestRow(result));
-    if (!result.ok) appendFailureRow(result);
-    summary.textContent = formatTestSummary(completed, total, passed, failed);
-    updateTestProgress(completed, total);
-    saveTestRun({ total, completed, rows });
-    await nextFrame();
   }
+
+  const workerCount = Math.min(TEST_SOLVE_CONCURRENCY, remainingCases.length);
+  await Promise.all(Array.from({ length: workerCount }, runNextTestCase));
 
   summary.textContent = formatTestSummary(completed, total, passed, failed);
   updateTestProgress(completed, total);
   saveTestRun({ total, completed, rows });
 
   testButton.disabled = false;
+}
+
+async function runBackendPuzzleTest(testCase) {
+  const gameState = puzzleToGameState(testCase.sub);
+  const result = {
+    label: testCase.label,
+    date: testCase.date,
+    difficulty: testCase.difficultyLabel,
+    ok: true,
+    message: ""
+  };
+
+  try {
+    await solveWithBackend(gameState, { timeoutMs: TEST_SOLVE_TIMEOUT_MS });
+  } catch (err) {
+    result.ok = false;
+    result.message = String(err?.message ?? err);
+  }
+
+  return result;
 }
 
 function restorePopupState() {
@@ -452,6 +543,7 @@ function restorePopupState() {
     currentState = saved.currentState;
     solveButton.disabled = false;
     renderState(currentState, saved.solution ?? null);
+    setSolveSource(saved.solveSource ?? null);
     setStatus(saved.status ?? "Detected");
     restored = true;
   }
