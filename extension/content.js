@@ -212,6 +212,9 @@
         .filter((cell) => cell.active)
         .map((cell) => ({
           id: cell.id,
+          index: cell.index,
+          row: cell.row,
+          column: cell.column,
           ...neighborNodeIds(flatCells, cell, columns)
         })),
       element: board
@@ -460,6 +463,8 @@
   function serializableBoard(boardState) {
     return boardState
       ? {
+          rows: boardState.rows,
+          columns: boardState.columns,
           nodes: boardState.nodes
         }
       : null;
@@ -548,4 +553,20 @@
     submitState(snapshot, "manual submit");
     return state;
   };
+
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type !== "READ_PIPS_STATE") return false;
+
+    try {
+      const state = serializable(readGameState());
+      sendResponse({ ok: true, state });
+    } catch (error) {
+      sendResponse({
+        ok: false,
+        error: String(error?.message ?? error)
+      });
+    }
+
+    return true;
+  });
 })();

@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Pips Helper</h1>
+        <span id="status">Ready</span>
+      </header>
+
+      <button id="readButton">Read puzzle</button>
+      <button id="solveButton" disabled>Solve</button>
+
+      <section id="summary"></section>
+      <section id="board"></section>
+      <section id="dominoes"></section>
+
+      <details>
+        <summary>Debug JSON</summary>
+        <pre id="debug"></pre>
+      </details>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

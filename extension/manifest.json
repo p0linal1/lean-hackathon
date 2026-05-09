@@ -2,10 +2,15 @@
   "manifest_version": 3,
   "name": "NYT Pips State Logger",
   "version": "0.1.0",
-  "description": "Logs the NYT Pips board shape, constraints, and available dominoes to the console.",
+  "description": "Reads the NYT Pips board shape, constraints, and available dominoes.",
+  "permissions": ["activeTab"],
   "host_permissions": [
     "http://127.0.0.1:8765/*"
   ],
+  "action": {
+    "default_title": "Pips Helper",
+    "default_popup": "popup.html"
+  },
   "content_scripts": [
     {
       "matches": [
