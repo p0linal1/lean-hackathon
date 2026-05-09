@@ -3,6 +3,7 @@ import Lean.Data.Json
 import Std
 import Std.Internal.Async.TCP
 import Untitled.Pips
+import Untitled.Solver
 
 open Std
 open Std.Net
@@ -158,6 +159,15 @@ def toResponseJson (pip : Pip) (dominoes : List Domino) (constraints : List Cons
     , ("constraints", .arr (constraints.map constraintJ).toArray)
     ]
 
+-- ── Solver result serialisation ──────────────────────────────────────────────
+
+def assignmentToJson (a : AssignmentImpl) : Lean.Json :=
+  .arr (a.map fun (d, n₁, n₂) =>
+    .mkObj [ ("domino", dominoJ d)
+           , ("fst", nodeJ n₁)
+           , ("snd", nodeJ n₂)
+           ]).toArray
+
 end PipsConvert
 
 -- ── HTTP server ───────────────────────────────────────────────────────────────
@@ -220,11 +230,23 @@ def handleRequest (stateRef : IO.Ref (Option Lean.Json)) (method path body : Str
           IO.println s!"[lean-http-server] parsed: {pip.nodes.length} nodes, \
             {pip.edges.length} edges, {dominoes.length} dominoes, \
             {constraints.length} constraints"
-          pure <| jsonResponse "200 OK" <| .mkObj
-            [ ("ok",          true)
-            , ("leanState",   PipsConvert.toResponseJson pip dominoes constraints)
-            , ("solvedState", json)
-            ]
+          let result := solve pip dominoes constraints
+          match result with
+          | some assignment =>
+            IO.println s!"[lean-http-server] SOLVED! assignment has {assignment.length} placements"
+            pure <| jsonResponse "200 OK" <| .mkObj
+              [ ("ok",          true)
+              , ("solved",      true)
+              , ("leanState",   PipsConvert.toResponseJson pip dominoes constraints)
+              , ("assignment",  PipsConvert.assignmentToJson assignment)
+              ]
+          | none =>
+            IO.println "[lean-http-server] No solution found"
+            pure <| jsonResponse "200 OK" <| .mkObj
+              [ ("ok",          true)
+              , ("solved",      false)
+              , ("leanState",   PipsConvert.toResponseJson pip dominoes constraints)
+              ]
       | _ =>
         pure <| errorResponse "400 Bad Request" "JSON body must be an object"
   else
