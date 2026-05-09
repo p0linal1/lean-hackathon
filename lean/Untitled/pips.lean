@@ -18,7 +18,7 @@ before lookup, so adjacency is symmetric by construction.
 
 structure Node where
   id : Nat
-deriving Repr, DecidableEq, Hashable, BEq
+deriving Repr, DecidableEq, Hashable
 
 instance : Ord Node where
   compare n₁ n₂ := compare n₁.id n₂.id
@@ -95,7 +95,7 @@ deriving Repr, DecidableEq, BEq, Hashable
 
 inductive ConstraintSpec where
   | sum   (ns : List Node) (target : Nat) (ty : SumConstraintType)
-  | equiv (ns : List Node) (target : Nat)
+  | equiv (ns : List Node)
 
 def SatisfiesConstraint (a : AssignmentSpec) : ConstraintSpec → Prop
   | .sum ns target .eq  => (∀ n ∈ ns, (nodeValue a n).isSome) ∧
@@ -104,7 +104,8 @@ def SatisfiesConstraint (a : AssignmentSpec) : ConstraintSpec → Prop
                             (ns.filterMap (nodeValue a)).sum < target
   | .sum ns target .gt  => (∀ n ∈ ns, (nodeValue a n).isSome) ∧
                             (ns.filterMap (nodeValue a)).sum > target
-  | .equiv ns target    => ∀ n ∈ ns, nodeValue a n = some target
+  | .equiv ns           => (∀ n ∈ ns, (nodeValue a n).isSome) ∧
+                            ∃ v, ∀ n ∈ ns, nodeValue a n = some v
 
 def SatisfiesAllConstraints (a : AssignmentSpec) (cs : List ConstraintSpec) : Prop :=
   ∀ c ∈ cs, SatisfiesConstraint a c
@@ -161,7 +162,7 @@ def assignmentIsValid (pip : Pip) (a : AssignmentImpl) : Bool :=
 
 inductive Constraint where
   | sum   (ns : List Node) (c : Nat) (t : SumConstraintType)
-  | equiv (ns : List Node) (c : Nat)
+  | equiv (ns : List Node)
 deriving Repr, BEq, Hashable
 
 def nodeValueImpl (a : AssignmentImpl) (n : Node) : Option Nat :=
@@ -182,8 +183,12 @@ def checkConstraint (a : AssignmentImpl) : Constraint → Bool
   | .sum ns target .gt  =>
     let vals := ns.filterMap (nodeValueImpl a)
     vals.length == ns.length && vals.sum > target
-  | .equiv ns target    =>
-    ns.all (λ n => nodeValueImpl a n == some target)
+  | .equiv ns           =>
+    let vals := ns.filterMap (nodeValueImpl a)
+    vals.length == ns.length &&
+    match vals with
+    | [] => true
+    | v :: rest => rest.all (· == v)
 
 def checkAllConstraints (a : AssignmentImpl) (cs : List Constraint) : Bool :=
   cs.all (checkConstraint a)
@@ -206,11 +211,54 @@ def toAssignmentSpec (a : AssignmentImpl) : AssignmentSpec :=
   a.map (λ (d, n₁, n₂) => { domino := d, fst := n₁, snd := n₂ })
 
 -- The key bridge theorem: the Bool check decides the Prop-based spec.
--- Since both layers now use the same edge list, this becomes nearly trivial.
---
--- theorem assignmentIsValid_correct (pip : Pip) (a : AssignmentImpl) :
---     assignmentIsValid pip a = true ↔
---     ValidAssignment (pip.toSpec) (toAssignmentSpec a) := by
---   sorry
+private theorem adjacent_iff_mem (pip : Pip) (n₁ n₂ : Node) :
+    adjacent pip n₁ n₂ = true ↔ normalizeEdge n₁ n₂ ∈ pip.edges := by
+  simp [adjacent, normalizeEdge]
+
+-- Sub-lemma: allPlacedAdjacently decides DominoesPlacedAdjacently
+theorem allPlacedAdjacently_correct (pip : Pip) (a : AssignmentImpl) :
+    allPlacedAdjacently pip a = true ↔
+    DominoesPlacedAdjacently (pip.toSpec) (toAssignmentSpec a) := by
+  unfold allPlacedAdjacently DominoesPlacedAdjacently toAssignmentSpec Pip.toSpec Adjacent
+  simp [List.all_eq_true, List.mem_map]
+  constructor
+  · intro h p d n₁ n₂ hmem heq
+    subst heq; simp
+    exact (adjacent_iff_mem pip n₁ n₂).mp (h d n₁ n₂ hmem)
+  · intro h d n₁ n₂ hmem
+    exact (adjacent_iff_mem pip n₁ n₂).mpr (h _ d n₁ n₂ hmem rfl)
+
+-- Sub-lemma: coversAllNodesImpl decides CoversAllNodes
+-- Requires: List.contains ↔ ∈ (via LawfulBEq) and length equality reasoning
+theorem coversAllNodesImpl_correct (pip : Pip) (a : AssignmentImpl) :
+    coversAllNodesImpl pip a = true ↔
+    CoversAllNodes (pip.toSpec) (toAssignmentSpec a) := by
+  unfold coversAllNodesImpl CoversAllNodes toAssignmentSpec Pip.toSpec assignedNodes
+  simp [Bool.and_eq_true, List.all_eq_true, List.mem_map]
+  sorry
+
+-- Sub-lemma: noOverlapImpl decides NoOverlap
+-- Requires: List.eraseDups.length = List.length ↔ List.Nodup, then Nodup ↔ pairwise ≠
+theorem noOverlapImpl_correct (pip : Pip) (a : AssignmentImpl) :
+    noOverlapImpl a = true ↔
+    NoOverlap (toAssignmentSpec a) := by
+  unfold noOverlapImpl NoOverlap toAssignmentSpec assignedNodes
+  simp [List.mem_map]
+  sorry
+
+theorem assignmentIsValid_correct (pip : Pip) (a : AssignmentImpl) :
+    assignmentIsValid pip a = true ↔
+    ValidAssignment (pip.toSpec) (toAssignmentSpec a) := by
+  unfold assignmentIsValid ValidAssignment
+  simp [Bool.and_eq_true]
+  exact ⟨
+    fun ⟨⟨h1, h2⟩, h3⟩ => ⟨
+      (allPlacedAdjacently_correct pip a).mp h1,
+      (coversAllNodesImpl_correct pip a).mp h2,
+      (noOverlapImpl_correct pip a).mp h3⟩,
+    fun ⟨h1, h2, h3⟩ => ⟨
+      ⟨(allPlacedAdjacently_correct pip a).mpr h1,
+       (coversAllNodesImpl_correct pip a).mpr h2⟩,
+      (noOverlapImpl_correct pip a).mpr h3⟩⟩
 
 end Bridge
