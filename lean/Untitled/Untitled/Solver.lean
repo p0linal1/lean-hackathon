@@ -65,7 +65,8 @@ def solveAux
         none
     | domino :: rest =>
       let edges := uncoveredEdges pip assignment
-      edges.findSome? (λ (n₁, n₂) =>
+      if edges.length != remaining.length then none
+      else edges.findSome? (λ (n₁, n₂) =>
         let placements := tryPlace domino n₁ n₂
         placements.findSome? (λ placement =>
           solveAux pip cs rest (placement :: assignment)))
@@ -151,7 +152,7 @@ theorem solveAux_sound (pip : Pip) (cs : List Constraint)
     exact ⟨hValid, hConstraints⟩
   | cons domino rest ih =>
     simp [solveAux] at h
-    obtain ⟨_, hfind⟩ := h
+    obtain ⟨_, _, hfind⟩ := h
     have ⟨_, edge, _, _, hinner, _⟩ := List.findSome?_eq_some_iff.mp hfind
     have ⟨_, placement, _, _, hsolve, _⟩ := List.findSome?_eq_some_iff.mp hinner
     exact ih (placement :: assignment) hsolve
