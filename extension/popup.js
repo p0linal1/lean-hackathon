@@ -21,9 +21,14 @@ const debugEl = document.querySelector("#debug");
 readButton.addEventListener("click", readPuzzle);
 solveButton.addEventListener("click", solvePuzzle);
 testButton.addEventListener("click", runPuzzleTests);
-restorePopupState();
+initializePopup();
 
-async function readPuzzle() {
+async function initializePopup() {
+  const restored = restorePopupState();
+  await readPuzzle({ preserveOnError: restored });
+}
+
+async function readPuzzle(options = {}) {
   setStatus("Reading");
 
   try {
@@ -36,7 +41,7 @@ async function readPuzzle() {
     savePopupState({ currentState, solution: null, status: "Detected" });
     setStatus("Detected");
   } catch (error) {
-    setStatus("Error");
+    if (!options.preserveOnError) setStatus("Error");
     debugEl.textContent = String(error?.message ?? error);
   }
 }
@@ -337,12 +342,14 @@ async function runPuzzleTests() {
 }
 
 function restorePopupState() {
+  let restored = false;
   const saved = loadJson(POPUP_STATE_KEY);
   if (saved?.currentState?.board?.nodes) {
     currentState = saved.currentState;
     solveButton.disabled = false;
     renderState(currentState, saved.solution ?? null);
     setStatus(saved.status ?? "Detected");
+    restored = true;
   }
 
   const testRun = loadTestRun();
@@ -357,7 +364,10 @@ function restorePopupState() {
     testResultsEl.appendChild(summary);
     updateTestProgress(testRun.completed, testRun.total);
     renderSavedTestRows(testRun.rows);
+    restored = true;
   }
+
+  return restored;
 }
 
 function renderSavedTestRows(rows) {
