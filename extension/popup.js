@@ -3,16 +3,20 @@ const LEAN_SERVER_STATE_URL = "http://127.0.0.1:8765/solve";
 
 const readButton = document.querySelector("#readButton");
 const solveButton = document.querySelector("#solveButton");
+const testButton = document.querySelector("#testButton");
 const statusEl = document.querySelector("#status");
 const summaryEl = document.querySelector("#summary");
 const boardEl = document.querySelector("#board");
 const boardSection = document.querySelector("#board-section");
 const dominoesEl = document.querySelector("#dominoes");
 const dominoesSection = document.querySelector("#dominoes-section");
+const testSection = document.querySelector("#test-section");
+const testResultsEl = document.querySelector("#test-results");
 const debugEl = document.querySelector("#debug");
 
 readButton.addEventListener("click", readPuzzle);
 solveButton.addEventListener("click", solvePuzzle);
+testButton.addEventListener("click", runPuzzleTests);
 
 async function readPuzzle() {
   setStatus("Reading");
@@ -187,4 +191,125 @@ function boardDimensions(board, nodesByIndex) {
     rows: side,
     columns: side
   };
+}
+
+// ── Puzzle JSON → game state conversion ──────────────────────────────────────
+
+function puzzleToGameState(puzzle) {
+  // Collect all active [row, col] cells from all regions
+  const activeSet = new Set();
+  for (const region of puzzle.regions ?? []) {
+    for (const [row, col] of region.indices ?? []) {
+      activeSet.add(`${row},${col}`);
+    }
+  }
+
+  const activeCells = Array.from(activeSet).map((key) => {
+    const [row, col] = key.split(",").map(Number);
+    return { row, col };
+  }).sort((a, b) => a.row - b.row || a.col - b.col);
+
+  const rows = Math.max(...activeCells.map((c) => c.row)) + 1;
+  const columns = Math.max(...activeCells.map((c) => c.col)) + 1;
+
+  const nodeId = (row, col) => `node-${row * columns + col}`;
+
+  const nodes = activeCells.map(({ row, col }) => ({
+    id: nodeId(row, col),
+    index: row * columns + col,
+    row,
+    column: col,
+    left: activeSet.has(`${row},${col - 1}`) ? nodeId(row, col - 1) : null,
+    right: activeSet.has(`${row},${col + 1}`) ? nodeId(row, col + 1) : null,
+    up: activeSet.has(`${row - 1},${col}`) ? nodeId(row - 1, col) : null,
+    down: activeSet.has(`${row + 1},${col}`) ? nodeId(row + 1, col) : null
+  }));
+
+  const dominoes = (puzzle.dominoes ?? []).map(([top, bottom], i) => ({
+    id: `domino-${i + 1}`,
+    top,
+    bottom
+  }));
+
+  const constraints = (puzzle.regions ?? [])
+    .filter((r) => r.type !== "empty")
+    .map((region) => {
+      const nodes = (region.indices ?? []).map(([row, col]) => nodeId(row, col));
+      let constraint = null;
+      if (region.type === "equals") {
+        constraint = { type: "equal" };
+      } else if (region.type === "sum") {
+        constraint = { type: "sum", sign: "=", value: region.target };
+      } else if (region.type === "less") {
+        constraint = { type: "sum", sign: "<", value: region.target };
+      } else if (region.type === "greater") {
+        constraint = { type: "sum", sign: ">", value: region.target };
+      }
+      return constraint ? { nodes, constraint } : null;
+    })
+    .filter(Boolean);
+
+  return { board: { rows, columns, nodes }, dominoes, constraints };
+}
+
+// ── Test runner ───────────────────────────────────────────────────────────────
+
+async function runPuzzleTests() {
+  testButton.disabled = true;
+  testSection.classList.remove("hidden");
+  testResultsEl.innerHTML = "<em>Loading puzzles…</em>";
+
+  let puzzles;
+  try {
+    const url = chrome.runtime.getURL("pips_puzzles.json");
+    const res = await fetch(url);
+    puzzles = await res.json();
+  } catch (err) {
+    testResultsEl.innerHTML = `<span class="test-error">Failed to load puzzles: ${err.message}</span>`;
+    testButton.disabled = false;
+    return;
+  }
+
+  testResultsEl.innerHTML = "";
+
+  const difficulties = ["easy_puzzle", "medium_puzzle", "hard_puzzle"];
+  let passed = 0;
+  let failed = 0;
+
+  for (const puzzle of puzzles) {
+    for (const difficulty of difficulties) {
+      const sub = puzzle[difficulty];
+      if (!sub) continue;
+
+      const label = `#${puzzle.id} ${difficulty.replace("_puzzle", "")}`;
+      const gameState = puzzleToGameState(sub);
+
+      const row = document.createElement("div");
+      row.className = "test-row";
+
+      try {
+        const res = await fetch(LEAN_SERVER_STATE_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(gameState)
+        });
+        const payload = await res.json();
+        const ok = res.ok && payload?.ok;
+        row.innerHTML = `<span class="test-badge ${ok ? "pass" : "fail"}">${ok ? "✓" : "✗"}</span> ${label}`;
+        if (ok) passed++; else failed++;
+      } catch (err) {
+        row.innerHTML = `<span class="test-badge fail">✗</span> ${label} — ${err.message}`;
+        failed++;
+      }
+
+      testResultsEl.appendChild(row);
+    }
+  }
+
+  const summary = document.createElement("div");
+  summary.className = "test-summary";
+  summary.textContent = `${passed} passed, ${failed} failed`;
+  testResultsEl.prepend(summary);
+
+  testButton.disabled = false;
 }
