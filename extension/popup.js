@@ -16,6 +16,7 @@ const dominoesSection = document.querySelector("#dominoes-section");
 const testSection = document.querySelector("#test-section");
 const testProgressEl = document.querySelector("#test-progress");
 const testProgressFillEl = document.querySelector("#test-progress-fill");
+const testFailuresEl = document.querySelector("#test-failures");
 const testResultsEl = document.querySelector("#test-results");
 const debugEl = document.querySelector("#debug");
 
@@ -286,6 +287,8 @@ async function runPuzzleTests() {
   }
 
   testResultsEl.innerHTML = "";
+  testFailuresEl.innerHTML = "";
+  testFailuresEl.classList.add("hidden");
 
   const difficulties = ["easy_puzzle", "medium_puzzle", "hard_puzzle"];
   const testCases = puzzles.flatMap((puzzle) =>
@@ -295,7 +298,9 @@ async function runPuzzleTests() {
         puzzle,
         difficulty,
         sub: puzzle[difficulty],
-        label: `#${puzzle.id} ${difficulty.replace("_puzzle", "")}`
+        date: puzzle.print_date,
+        difficultyLabel: difficulty.replace("_puzzle", ""),
+        label: `${puzzle.print_date} ${difficulty.replace("_puzzle", "")} (#${puzzle.id})`
       }))
   );
   const total = testCases.length;
@@ -311,11 +316,18 @@ async function runPuzzleTests() {
   testResultsEl.appendChild(summary);
   updateTestProgress(completed, total);
   renderSavedTestRows(rows);
+  renderFailureRows(rows);
 
   for (const testCase of testCases.slice(completed)) {
     const gameState = puzzleToGameState(testCase.sub);
 
-    const result = { label: testCase.label, ok: true, message: "" };
+    const result = {
+      label: testCase.label,
+      date: testCase.date,
+      difficulty: testCase.difficultyLabel,
+      ok: true,
+      message: ""
+    };
 
     try {
       window.PipsSolver.solve(gameState, { timeoutMs: TEST_SOLVE_TIMEOUT_MS });
@@ -329,6 +341,7 @@ async function runPuzzleTests() {
     completed++;
     rows.push(result);
     testResultsEl.appendChild(createTestRow(result));
+    if (!result.ok) appendFailureRow(result);
     summary.textContent = formatTestSummary(completed, total, passed, failed);
     updateTestProgress(completed, total);
     saveTestRun({ total, completed, rows });
@@ -357,6 +370,8 @@ function restorePopupState() {
   if (testRun?.rows?.length) {
     testSection.classList.remove("hidden");
     testResultsEl.innerHTML = "";
+    testFailuresEl.innerHTML = "";
+    testFailuresEl.classList.add("hidden");
     const passed = testRun.rows.filter((row) => row.ok).length;
     const failed = testRun.rows.filter((row) => !row.ok).length;
     const summary = document.createElement("div");
@@ -365,6 +380,7 @@ function restorePopupState() {
     testResultsEl.appendChild(summary);
     updateTestProgress(testRun.completed, testRun.total);
     renderSavedTestRows(testRun.rows);
+    renderFailureRows(testRun.rows);
     restored = true;
   }
 
@@ -377,6 +393,24 @@ function renderSavedTestRows(rows) {
   }
 }
 
+function renderFailureRows(rows) {
+  for (const row of rows) {
+    if (!row.ok) appendFailureRow(row);
+  }
+}
+
+function appendFailureRow(result) {
+  if (testFailuresEl.classList.contains("hidden")) {
+    testFailuresEl.classList.remove("hidden");
+    const heading = document.createElement("div");
+    heading.className = "test-failures-label";
+    heading.textContent = "Failures";
+    testFailuresEl.appendChild(heading);
+  }
+
+  testFailuresEl.appendChild(createTestRow(result));
+}
+
 function createTestRow(result) {
   const row = document.createElement("div");
   row.className = "test-row";
@@ -387,7 +421,10 @@ function createTestRow(result) {
   row.appendChild(badge);
 
   const text = document.createElement("span");
-  text.textContent = result.ok ? result.label : `${result.label} — ${result.message}`;
+  const failureLabel = result.date && result.difficulty
+    ? `${result.date} ${result.difficulty}`
+    : result.label;
+  text.textContent = result.ok ? result.label : `${failureLabel} — ${result.message}`;
   row.appendChild(text);
 
   return row;
