@@ -4,14 +4,23 @@
     const edges = state?.board?.edges ?? [];
     const dominoes = state?.dominoes ?? [];
     const constraints = state?.constraints ?? [];
+    const fixedPlacements = state?.fixedPlacements ?? [];
 
     if (!nodes.length) throw new Error("No board nodes detected");
-    if (!dominoes.length) throw new Error("No dominoes detected");
+    if (!dominoes.length && !fixedPlacements.length) throw new Error("No dominoes detected");
 
     const graph = buildSolverGraph(nodes, edges, constraints);
     const remainingDominoes = dominoes.map((domino, index) => ({ domino, index }));
     const deadline = solverDeadline(options.timeoutMs);
-    const result = search(graph, remainingDominoes, new Map(), [], new Set(), deadline);
+    const seeded = seedFixedPlacements(graph, fixedPlacements, remainingDominoes);
+    const result = search(
+      graph,
+      remainingDominoes,
+      seeded.valuesByNode,
+      seeded.placements,
+      seeded.usedNodes,
+      deadline
+    );
     if (!result) throw new Error("No solution found");
     return result;
   }
@@ -39,6 +48,45 @@
       neighborsByNode,
       constraints
     };
+  }
+
+  function seedFixedPlacements(graph, fixedPlacements, remainingDominoes) {
+    const valuesByNode = new Map();
+    const usedNodes = new Set();
+    const placements = [];
+
+    for (const placement of fixedPlacements) {
+      if (!graph.nodeById.has(placement.topNode) || !graph.nodeById.has(placement.bottomNode)) {
+        throw new Error("Placed domino does not match the board");
+      }
+      if (usedNodes.has(placement.topNode) || usedNodes.has(placement.bottomNode)) {
+        throw new Error("Placed dominoes overlap");
+      }
+      if (!(graph.neighborsByNode.get(placement.topNode) ?? []).includes(placement.bottomNode)) {
+        throw new Error("Placed domino covers non-adjacent cells");
+      }
+
+      const topValue = placement.values?.[placement.topNode];
+      const bottomValue = placement.values?.[placement.bottomNode];
+      if (!Number.isFinite(topValue) || !Number.isFinite(bottomValue)) {
+        throw new Error("Placed domino is missing pip values");
+      }
+
+      valuesByNode.set(placement.topNode, topValue);
+      valuesByNode.set(placement.bottomNode, bottomValue);
+      usedNodes.add(placement.topNode);
+      usedNodes.add(placement.bottomNode);
+      placements.push(placement);
+    }
+
+    if (
+      hasDeadEnd(graph, usedNodes) ||
+      !constraintsStillPossible(graph.constraints, valuesByNode, remainingDominoes)
+    ) {
+      throw new Error("Placed dominoes contradict the puzzle");
+    }
+
+    return { valuesByNode, placements, usedNodes };
   }
 
   function orientations(domino) {

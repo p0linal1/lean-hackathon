@@ -408,11 +408,13 @@
 
     const dominoes = [];
     const dominoNodeMap = {};
+    const boardRect = boardState?.element?.getBoundingClientRect();
 
     byClassTokenPrefix(CLASS_PARTS.trayWrapper, tray)
       .forEach((wrapper, trayIndex) => {
         const domino = wrapper.querySelector(`[class*="${CLASS_PARTS.domino}"]`);
         if (!domino) return;
+        if (boardRect && overlapsBoard(domino, boardRect)) return;
 
         const halves = byClassTokenPrefix(CLASS_PARTS.half, domino);
         const values = halves.map(readPipCount);
@@ -434,53 +436,8 @@
     return { dominoes, dominoNodeMap };
   }
 
-  function readGameState() {
-    const board = readBoard();
-    const { dominoes, dominoNodeMap } = readDominoes(board);
-    return {
-      board: serializableBoard(board),
-      dominoes,
-      dominoNodeMap,
-      constraints: readConstraints(board)
-    };
-  }
-
-  function nodeIndex(id) {
-    const match = String(id || "").match(/^node-(\d+)$/);
-    return match ? Number(match[1]) : -1;
-  }
-
-  function sameTileValues(left, right) {
-    return left.length === 2 &&
-      right.length === 2 &&
-      ((left[0] === right[0] && left[1] === right[1]) ||
-        (left[0] === right[1] && left[1] === right[0]));
-  }
-
-  function placementValues(placement) {
-    return [
-      Number(placement?.values?.[placement.topNode]),
-      Number(placement?.values?.[placement.bottomNode])
-    ];
-  }
-
-  function findTrayDominoForPlacement(boardState, placement) {
-    const tray = findActiveTrayElement(boardState);
-    if (!tray) throw new Error("No active Pips tray found");
-
-    const wanted = placementValues(placement);
-    const candidates = byClassTokenPrefix(CLASS_PARTS.domino, tray)
-      .filter(isEffectivelyVisible)
-      .map((domino) => ({
-        domino,
-        values: byClassTokenPrefix(CLASS_PARTS.half, domino).map(readPipCount)
-      }))
-      .filter((candidate) => sameTileValues(candidate.values, wanted));
-
-    const exact = candidates.find((candidate) =>
-      candidate.values[0] === wanted[0] && candidate.values[1] === wanted[1]
-    );
-    return (exact || candidates[0])?.domino || null;
+  function overlapsBoard(element, boardRect) {
+    return overlapRatio(element.getBoundingClientRect(), boardRect) > 0.15;
   }
 
   function centerOf(rect) {
@@ -490,99 +447,99 @@
     };
   }
 
-  function targetPointForPlacement(boardState, placement) {
+  function coveredCellsForDomino(domino, cells, nodeByIndex) {
+    const dominoRect = domino.getBoundingClientRect();
+    return cells
+      .map((cell, index) => ({
+        cell,
+        index,
+        node: nodeByIndex.get(index),
+        ratio: overlapRatio(dominoRect, cell.getBoundingClientRect())
+      }))
+      .filter((item) => item.node && item.ratio > 0.08)
+      .sort((a, b) => b.ratio - a.ratio)
+      .slice(0, 2);
+  }
+
+  function orderedCoveredCells(coveredCells) {
+    const [first, second] = coveredCells;
+    if (!first || !second) return [];
+
+    const sameRow = first.node.row === second.node.row;
+    return coveredCells.sort((left, right) =>
+      sameRow
+        ? left.node.column - right.node.column
+        : left.node.row - right.node.row
+    );
+  }
+
+  function orderedHalvesForCells(halves, orderedCells) {
+    if (orderedCells.length !== 2) return [];
+
+    const sameRow = orderedCells[0].node.row === orderedCells[1].node.row;
+    return halves
+      .map((half) => ({
+        half,
+        value: readPipCount(half),
+        center: centerOf(half.getBoundingClientRect())
+      }))
+      .sort((left, right) =>
+        sameRow
+          ? left.center.x - right.center.x
+          : left.center.y - right.center.y
+      );
+  }
+
+  function readPlacedPlacements(boardState) {
+    if (!boardState?.element) return [];
+
+    const nodeByIndex = new Map(boardState.nodes.map((node) => [node.index, node]));
     const cells = directByClassTokenPrefix(boardState.element, CLASS_PARTS.cell);
-    const firstCell = cells[nodeIndex(placement.topNode)];
-    const secondCell = cells[nodeIndex(placement.bottomNode)];
-    if (!firstCell || !secondCell) {
-      throw new Error("Solved placement does not match the visible board");
-    }
+    const boardRect = boardState.element.getBoundingClientRect();
+    const seen = new Set();
 
-    const first = centerOf(firstCell.getBoundingClientRect());
-    const second = centerOf(secondCell.getBoundingClientRect());
+    return byClassTokenPrefix(CLASS_PARTS.domino)
+      .filter(isEffectivelyVisible)
+      .filter((domino) => overlapsBoard(domino, boardRect))
+      .flatMap((domino, index) => {
+        if (seen.has(domino)) return [];
+        seen.add(domino);
+
+        const halves = byClassTokenPrefix(CLASS_PARTS.half, domino);
+        const orderedCells = orderedCoveredCells(coveredCellsForDomino(domino, cells, nodeByIndex));
+        const orderedHalves = orderedHalvesForCells(halves, orderedCells);
+        if (orderedCells.length !== 2 || orderedHalves.length !== 2) return [];
+
+        const nodes = orderedCells.map((item) => item.node);
+        if (nodes[0].id === nodes[1].id) return [];
+        if (!Object.values(nodes[0]).includes(nodes[1].id)) return [];
+
+        return [{
+          domino: {
+            id: `placed-${index + 1}`,
+            top: orderedHalves[0].value,
+            bottom: orderedHalves[1].value
+          },
+          topNode: nodes[0].id,
+          bottomNode: nodes[1].id,
+          values: {
+            [nodes[0].id]: orderedHalves[0].value,
+            [nodes[1].id]: orderedHalves[1].value
+          }
+        }];
+      });
+  }
+
+  function readGameState() {
+    const board = readBoard();
+    const { dominoes, dominoNodeMap } = readDominoes(board);
     return {
-      x: (first.x + second.x) / 2,
-      y: (first.y + second.y) / 2
+      board: serializableBoard(board),
+      dominoes,
+      dominoNodeMap,
+      fixedPlacements: readPlacedPlacements(board),
+      constraints: readConstraints(board)
     };
-  }
-
-  function pointerEventInit(point, type) {
-    return {
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-      clientX: point.x,
-      clientY: point.y,
-      screenX: point.x,
-      screenY: point.y,
-      pointerId: 1,
-      pointerType: "mouse",
-      isPrimary: true,
-      button: 0,
-      buttons: type === "pointerup" || type === "mouseup" ? 0 : 1
-    };
-  }
-
-  function dispatchPointerEvent(target, type, point) {
-    try {
-      target.dispatchEvent(new PointerEvent(type, pointerEventInit(point, type)));
-    } catch {
-      target.dispatchEvent(new MouseEvent(type.replace(/^pointer/, "mouse"), pointerEventInit(point, type)));
-    }
-  }
-
-  function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  async function dragDominoToPoint(domino, point) {
-    const start = centerOf(domino.getBoundingClientRect());
-    const startTarget = document.elementFromPoint(start.x, start.y) || domino;
-
-    dispatchPointerEvent(startTarget, "pointerover", start);
-    dispatchPointerEvent(startTarget, "pointermove", start);
-    dispatchPointerEvent(startTarget, "pointerdown", start);
-    dispatchPointerEvent(startTarget, "mousedown", start);
-
-    const steps = 10;
-    for (let step = 1; step <= steps; step += 1) {
-      const current = {
-        x: start.x + ((point.x - start.x) * step) / steps,
-        y: start.y + ((point.y - start.y) * step) / steps
-      };
-      const moveTarget = document.elementFromPoint(current.x, current.y) || document;
-      dispatchPointerEvent(moveTarget, "pointermove", current);
-      dispatchPointerEvent(moveTarget, "mousemove", current);
-      await sleep(16);
-    }
-
-    const endTarget = document.elementFromPoint(point.x, point.y) || document;
-    dispatchPointerEvent(endTarget, "pointerup", point);
-    dispatchPointerEvent(endTarget, "mouseup", point);
-    await sleep(80);
-  }
-
-  async function placeSolvedPlacement(placement) {
-    const boardState = readBoard();
-    if (!boardState?.element) throw new Error("No active Pips board found");
-
-    const domino = findTrayDominoForPlacement(boardState, placement);
-    if (!domino) {
-      const values = placementValues(placement).join("-");
-      throw new Error(`No available ${values} domino found in the tray`);
-    }
-
-    domino.scrollIntoView({ block: "center", inline: "center" });
-    await sleep(30);
-    await dragDominoToPoint(domino, targetPointForPlacement(boardState, placement));
-    scheduleLog("placed domino");
-  }
-
-  async function placeSolvedPlacements(placements) {
-    for (const placement of placements || []) {
-      await placeSolvedPlacement(placement);
-      await sleep(90);
-    }
   }
 
   function serializableBoard(boardState) {
@@ -632,26 +589,6 @@
   };
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === "PLACE_PIPS_PLACEMENT") {
-      placeSolvedPlacement(message.placement)
-        .then(() => sendResponse({ ok: true }))
-        .catch((error) => sendResponse({
-          ok: false,
-          error: String(error?.message ?? error)
-        }));
-      return true;
-    }
-
-    if (message?.type === "PLACE_PIPS_SOLUTION") {
-      placeSolvedPlacements(message.placements)
-        .then(() => sendResponse({ ok: true }))
-        .catch((error) => sendResponse({
-          ok: false,
-          error: String(error?.message ?? error)
-        }));
-      return true;
-    }
-
     if (message?.type !== "READ_PIPS_STATE") return false;
 
     try {

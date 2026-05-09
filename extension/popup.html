@@ -12,10 +12,13 @@
       </header>
 
       <div class="button-row">
-        <button id="readButton">Read puzzle</button>
         <button id="solveButton" disabled>Solve</button>
-        <button id="fillAllButton" disabled>Fill all</button>
         <button id="testButton">Test puzzles</button>
+      </div>
+
+      <div id="board-section" class="panel hidden">
+        <div class="panel-label">Board</div>
+        <div id="board"></div>
       </div>
 
       <div id="test-section" class="panel hidden">
@@ -25,11 +28,6 @@
         </div>
         <div id="test-failures" class="test-failures hidden"></div>
         <div id="test-results"></div>
-      </div>
-
-      <div id="board-section" class="panel hidden">
-        <div class="panel-label">Board</div>
-        <div id="board"></div>
       </div>
     </main>
 
