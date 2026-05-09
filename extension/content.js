@@ -30,10 +30,6 @@
       .filter((element) => hasClassTokenPrefix(element, prefix));
   }
 
-  function directByClassPart(root, part) {
-    return Array.from(root.children).filter((child) => hasClassPart(child, part));
-  }
-
   function directByClassTokenPrefix(root, prefix) {
     return Array.from(root.children).filter((child) => hasClassTokenPrefix(child, prefix));
   }
@@ -159,6 +155,31 @@
     return Number.isInteger(square) ? square : null;
   }
 
+  function boardNodeId(index) {
+    return `cell-${index}`;
+  }
+
+  function neighborNodeIds(cells, cell, columns) {
+    const empty = { left: null, right: null, up: null, down: null };
+    if (!columns) return empty;
+
+    const activeIndexes = new Set(cells.filter((candidate) => candidate.active).map((candidate) => candidate.index));
+    const rows = Math.ceil(cells.length / columns);
+    const neighbors = {
+      left: cell.column > 0 ? cell.index - 1 : null,
+      right: cell.column < columns - 1 ? cell.index + 1 : null,
+      up: cell.row > 0 ? cell.index - columns : null,
+      down: cell.row < rows - 1 ? cell.index + columns : null
+    };
+
+    return Object.fromEntries(
+      Object.entries(neighbors).map(([direction, index]) => [
+        direction,
+        index !== null && activeIndexes.has(index) ? boardNodeId(index) : null
+      ])
+    );
+  }
+
   function readBoard() {
     const board = findActiveBoardElement();
     if (!board) return null;
@@ -172,6 +193,7 @@
       const style = getComputedStyle(cell);
       const hidden = hasClassPart(cell, CLASS_PARTS.hidden) || style.display === "none" || style.visibility === "hidden";
       return {
+        id: boardNodeId(index),
         index,
         row: columns ? Math.floor(index / columns) : null,
         column: columns ? index % columns : null,
@@ -180,23 +202,15 @@
       };
     });
 
-    const mask = columns
-      ? Array.from({ length: rows }, (_, row) =>
-          flatCells
-            .slice(row * columns, row * columns + columns)
-            .map((cell) => (cell.hidden ? 0 : 1))
-        )
-      : null;
-
     return {
       rows,
       columns,
-      totalCells: cells.length,
-      activeCells: flatCells.filter((cell) => cell.active).length,
-      hiddenCells: flatCells.filter((cell) => cell.hidden).length,
-      mask,
-      cells: flatCells,
-      boardId: board.getAttribute("data-testid") || board.parentElement?.getAttribute("data-testid") || null,
+      nodes: flatCells
+        .filter((cell) => cell.active)
+        .map((cell) => ({
+          id: cell.id,
+          ...neighborNodeIds(flatCells, cell, columns)
+        })),
       element: board
     };
   }
@@ -308,18 +322,29 @@
         const text = normalizeConstraintText(labelText);
         const cellIndexes = matchingRegionIndexes(regionCellDetails, index, boardState);
         return {
-          source: "region",
           text,
-          color: details.color,
-          index,
-          row: details.row,
-          column: details.column,
-          hidden: details.hidden,
-          cellIndexes,
-          className: String(label.className || "")
+          cellIndexes
         };
       });
     });
+  }
+
+  function parseConstraint(text) {
+    const normalized = String(text || "").replace(/\s+/g, "");
+    if (normalized === "=") return { type: "equal" };
+
+    const match = normalized.match(/^([<>=])?(\d+)$/);
+    if (!match) return null;
+
+    return {
+      type: "sum",
+      sign: match[1] || "=",
+      value: Number(match[2])
+    };
+  }
+
+  function constraintNodes(cellIndexes) {
+    return Array.from(new Set(cellIndexes)).sort((a, b) => a - b).map(boardNodeId);
   }
 
   function readConstraints(boardState) {
@@ -352,11 +377,9 @@
           overlapRatio(rect, boardRect) > 0.05;
         return {
           text: textOf(element),
-          ariaLabel: element.getAttribute("aria-label") || null,
-          title: element.getAttribute("title") || null,
-          className: String(element.className || ""),
           cellIndexes: cellIndexesForElement(element, boardState),
-          inBoard
+          inBoard,
+          className: String(element.className || "")
         };
       })
       .filter((item) => {
@@ -376,7 +399,12 @@
       unique.set(key, constraint);
     }
 
-    return [...regionConstraints, ...Array.from(unique.values())];
+    return [...regionConstraints, ...Array.from(unique.values())]
+      .map((item) => ({
+        nodes: constraintNodes(item.cellIndexes || []),
+        constraint: parseConstraint(item.text)
+      }))
+      .filter((item) => item.constraint && item.nodes.length > 0);
   }
 
   function readPipCount(half) {
@@ -385,73 +413,54 @@
 
   function readDominoes(boardState) {
     const tray = findActiveTrayElement(boardState);
-    if (!tray) return [];
+    if (!tray) return { dominoes: [], dominoNodeMap: {} };
 
-    return byClassTokenPrefix(CLASS_PARTS.trayWrapper, tray)
-      .map((wrapper, trayIndex) => {
+    const dominoes = [];
+    const dominoNodeMap = {};
+
+    byClassTokenPrefix(CLASS_PARTS.trayWrapper, tray)
+      .forEach((wrapper, trayIndex) => {
         const domino = wrapper.querySelector(`[class*="${CLASS_PARTS.domino}"]`);
-        if (!domino) return null;
+        if (!domino) return;
 
         const halves = byClassTokenPrefix(CLASS_PARTS.half, domino);
         const values = halves.map(readPipCount);
         const idMatch = halves[0]?.id?.match(/^domino-(\d+)-/);
-        return {
-          id: idMatch ? Number(idMatch[1]) : trayIndex + 1,
-          trayIndex,
-          values,
-          rotation: domino.style.transform || getComputedStyle(domino).transform,
-          halfIds: halves.map((half) => half.id || null),
-          visible: isEffectivelyVisible(domino),
-          element: domino
-        };
-      })
-      .filter(Boolean);
-  }
+        const id = `domino-${idMatch ? Number(idMatch[1]) : trayIndex + 1}`;
+        const nodes = halves.map((half, halfIndex) => half.id || `${id}-${halfIndex === 0 ? "top" : "bottom"}`);
 
-  function readDebugCounts() {
-    const boards = byClassTokenPrefix(CLASS_PARTS.board)
-      .filter((element) => directByClassTokenPrefix(element, CLASS_PARTS.cell).length > 0);
-    const trays = byClassTokenPrefix(CLASS_PARTS.tray)
-      .filter((tray) => byClassTokenPrefix(CLASS_PARTS.trayWrapper, tray).length > 0);
-    return {
-      boardCandidates: boards.length,
-      visibleBoardCandidates: boards.filter(isEffectivelyVisible).length,
-      trayCandidates: trays.length,
-      visibleTrayCandidates: trays.filter(isEffectivelyVisible).length
-    };
+        dominoes.push({
+          id,
+          top: values[0] ?? 0,
+          bottom: values[1] ?? 0
+        });
+        dominoNodeMap[id] = nodes;
+      });
+
+    return { dominoes, dominoNodeMap };
   }
 
   function readGameState() {
     const board = readBoard();
+    const { dominoes, dominoNodeMap } = readDominoes(board);
     return {
-      url: location.href,
-      readAt: new Date().toISOString(),
-      debug: readDebugCounts(),
-      board,
-      constraints: readConstraints(board),
-      dominoes: readDominoes(board)
+      board: serializableBoard(board),
+      dominoes,
+      dominoNodeMap,
+      constraints: readConstraints(board)
     };
   }
 
-  function serializable(state) {
-    const board = state.board
+  function serializableBoard(boardState) {
+    return boardState
       ? {
-          rows: state.board.rows,
-          columns: state.board.columns,
-          totalCells: state.board.totalCells,
-          activeCells: state.board.activeCells,
-          hiddenCells: state.board.hiddenCells,
-          boardId: state.board.boardId,
-          mask: state.board.mask,
-          cells: state.board.cells
+          nodes: boardState.nodes
         }
       : null;
+  }
 
-    return {
-      ...state,
-      board,
-      dominoes: state.dominoes.map((domino) => ({ ...domino, element: undefined }))
-    };
+  function serializable(state) {
+    return state;
   }
 
   function logState(reason) {
@@ -465,18 +474,11 @@
 
     console.groupCollapsed(`${LOG_PREFIX} game state (${reason})`);
     console.log("state", cleanState);
-    console.log("board shape", cleanState.board);
+    console.log("board", cleanState.board);
+    console.log("dominoes", cleanState.dominoes);
+    console.log("dominoNodeMap", cleanState.dominoNodeMap);
     console.log("constraints", cleanState.constraints);
-    console.log("debug", cleanState.debug);
-    console.table(cleanState.dominoes.map(({ id, trayIndex, values, rotation, halfIds, visible }) => ({
-      id,
-      trayIndex,
-      first: values[0],
-      second: values[1],
-      rotation,
-      visible,
-      halfIds: halfIds.join(", ")
-    })));
+    console.table(cleanState.dominoes);
     console.groupEnd();
   }
 

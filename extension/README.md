@@ -17,6 +17,7 @@ Minimal unpacked Chrome extension that logs NYT Pips state from the page DOM.
 
 The logged snapshot includes:
 
-- board shape: rows, columns, hidden/active cell mask, and indexed cells
-- constraints: visible constraint-like DOM nodes with text, labels, classes, and overlapping cell indexes when detectable
-- dominoes: tray domino ids, pip values, rotation, and half element ids
+- `board`: active node ids with `left`, `right`, `up`, and `down` links
+- `dominoes`: `{ id, top, bottom }`
+- `dominoNodeMap`: domino id to `[topNode, bottomNode]`
+- `constraints`: `{ nodes, constraint }`, where constraint is either `{ type: "equal" }` or `{ type: "sum", sign, value }`
