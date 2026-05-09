@@ -15,7 +15,6 @@ const STATUS_CLASSES = [
 const solveButton = document.querySelector("#solveButton");
 const testButton = document.querySelector("#testButton");
 const statusEl = document.querySelector("#status");
-const solveSourceEl = document.querySelector("#solve-source");
 const boardEl = document.querySelector("#board");
 const boardSection = document.querySelector("#board-section");
 const testSection = document.querySelector("#test-section");
@@ -43,8 +42,7 @@ async function readPuzzle(options = {}) {
     solveButton.disabled = !currentState?.board?.nodes?.length;
 
     renderState(currentState);
-    setSolveSource(null);
-    savePopupState({ currentState, solution: null, status: "Detected", solveSource: null });
+    savePopupState({ currentState, solution: null, status: "Detected" });
     setStatus("Detected");
   } catch (error) {
     if (!options.preserveOnError) setStatus("Error");
@@ -59,13 +57,11 @@ async function solvePuzzle() {
 
   try {
     const solution = await solveWithBackend(currentState);
-    setSolveSource("backend");
     renderState(currentState, solution);
     savePopupState({
       currentState,
       solution,
-      status: "Solved",
-      solveSource: "backend"
+      status: "Solved"
     });
     setStatus("Solved");
   } catch (error) {
@@ -276,12 +272,6 @@ function setStatus(status) {
   statusEl.textContent = status;
   STATUS_CLASSES.forEach(cls => statusEl.classList.remove(cls));
   statusEl.classList.add(status.toLowerCase());
-}
-
-function setSolveSource(source) {
-  solveSourceEl.classList.toggle("hidden", !source);
-  solveSourceEl.classList.toggle("backend", source === "backend");
-  solveSourceEl.textContent = source ? `Solved: ${source}` : "";
 }
 
 async function readStateFromCurrentTab() {
@@ -527,7 +517,6 @@ function restorePopupState() {
     currentState = saved.currentState;
     solveButton.disabled = false;
     renderState(currentState, saved.solution ?? null);
-    setSolveSource(saved.solveSource ?? null);
     setStatus(saved.status ?? "Detected");
     restored = true;
   }
