@@ -28,7 +28,6 @@
   function buildSolverGraph(nodes, constraints) {
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
     const neighborsByNode = new Map();
-    const constraintsByNode = new Map(nodes.map((node) => [node.id, []]));
 
     for (const node of nodes) {
       const neighbors = ["left", "right", "up", "down"]
@@ -37,20 +36,11 @@
       neighborsByNode.set(node.id, neighbors);
     }
 
-    for (const constraint of constraints) {
-      for (const nodeId of constraint.nodes ?? []) {
-        if (constraintsByNode.has(nodeId)) {
-          constraintsByNode.get(nodeId).push(constraint);
-        }
-      }
-    }
-
     return {
       nodes,
       nodeById,
       neighborsByNode,
-      constraints,
-      constraintsByNode
+      constraints
     };
   }
 
@@ -63,24 +53,46 @@
   function search(graph, remainingDominoes, valuesByNode, placements, usedNodes, deadline) {
     checkDeadline(deadline);
 
-    if (!remainingDominoes.length) {
-      return usedNodes.size === graph.nodes.length && constraintsSatisfied(graph.constraints, valuesByNode)
-        ? { placements, valuesByNode: Object.fromEntries(valuesByNode) }
+    const propagated = propagateState(
+      graph,
+      remainingDominoes,
+      new Map(valuesByNode),
+      [...placements],
+      new Set(usedNodes),
+      deadline
+    );
+    if (!propagated) return null;
+
+    if (!propagated.remainingDominoes.length) {
+      return propagated.usedNodes.size === graph.nodes.length && constraintsSatisfied(graph.constraints, propagated.valuesByNode)
+        ? { placements: propagated.placements, valuesByNode: Object.fromEntries(propagated.valuesByNode) }
         : null;
     }
 
-    const candidates = nextPlacementCandidates(graph, remainingDominoes, valuesByNode, usedNodes);
+    const candidates = nextPlacementCandidates(
+      graph,
+      propagated.remainingDominoes,
+      propagated.valuesByNode,
+      propagated.usedNodes
+    );
     if (!candidates.length) return null;
 
     for (const { placement, nextDominoes } of candidates) {
-      applyPlacement(placement, valuesByNode, usedNodes);
+      applyPlacement(placement, propagated.valuesByNode, propagated.usedNodes);
 
-      if (!hasDeadEnd(graph, usedNodes)) {
-        const result = search(graph, nextDominoes, valuesByNode, [...placements, placement], usedNodes, deadline);
+      if (!hasDeadEnd(graph, propagated.usedNodes)) {
+        const result = search(
+          graph,
+          nextDominoes,
+          propagated.valuesByNode,
+          [...propagated.placements, placement],
+          propagated.usedNodes,
+          deadline
+        );
         if (result) return result;
       }
 
-      undoPlacement(placement, valuesByNode, usedNodes);
+      undoPlacement(placement, propagated.valuesByNode, propagated.usedNodes);
     }
 
     return null;
@@ -90,13 +102,114 @@
     return items.slice(0, index).concat(items.slice(index + 1));
   }
 
-  function nextPlacementCandidates(graph, remainingDominoes, valuesByNode, usedNodes) {
-    let best = null;
+  function propagateState(graph, remainingDominoes, valuesByNode, placements, usedNodes, deadline) {
+    let remaining = remainingDominoes;
+
+    while (true) {
+      checkDeadline(deadline);
+      const domains = candidateDomains(graph, remaining, valuesByNode, usedNodes);
+      if (!domains) return null;
+
+      const forced = firstForcedPlacement(domains);
+      if (!forced) {
+        return {
+          remainingDominoes: remaining,
+          valuesByNode,
+          placements,
+          usedNodes
+        };
+      }
+
+      applyPlacement(forced.placement, valuesByNode, usedNodes);
+      placements.push(forced.placement);
+      remaining = withoutIndex(remaining, forced.dominoPosition);
+
+      if (
+        hasDeadEnd(graph, usedNodes) ||
+        !constraintsStillPossible(graph.constraints, valuesByNode, remaining)
+      ) {
+        return null;
+      }
+    }
+  }
+
+  function candidateDomains(graph, remainingDominoes, valuesByNode, usedNodes) {
+    const byNode = new Map(graph.nodes
+      .filter((node) => !usedNodes.has(node.id))
+      .map((node) => [node.id, []]));
+    const byDomino = new Map(remainingDominoes.map((entry) => [entry.index, []]));
+    const all = [];
+    const seenEdges = new Set();
 
     for (const node of graph.nodes) {
       if (usedNodes.has(node.id)) continue;
 
-      const candidates = placementCandidatesForNode(graph, node.id, remainingDominoes, valuesByNode, usedNodes);
+      for (const neighborId of emptyNeighborIds(graph, node.id, usedNodes)) {
+        const edgeKey = [node.id, neighborId].sort().join("|");
+        if (seenEdges.has(edgeKey)) continue;
+        seenEdges.add(edgeKey);
+
+        for (let dominoPosition = 0; dominoPosition < remainingDominoes.length; dominoPosition += 1) {
+          const entry = remainingDominoes[dominoPosition];
+          const nextDominoes = withoutIndex(remainingDominoes, dominoPosition);
+
+          for (const orientation of orientations(entry.domino)) {
+            const placement = {
+              domino: entry.domino,
+              topNode: node.id,
+              bottomNode: neighborId,
+              values: {
+                [node.id]: orientation.top,
+                [neighborId]: orientation.bottom
+              }
+            };
+
+            if (!placeIsStillPossible(graph, placement, valuesByNode, usedNodes, nextDominoes)) continue;
+
+            const candidate = {
+              placement,
+              nextDominoes,
+              dominoPosition,
+              dominoIndex: entry.index
+            };
+            all.push(candidate);
+            byNode.get(node.id)?.push(candidate);
+            byNode.get(neighborId)?.push(candidate);
+            byDomino.get(entry.index)?.push(candidate);
+          }
+        }
+      }
+    }
+
+    for (const candidates of byNode.values()) {
+      if (!candidates.length) return null;
+    }
+
+    for (const candidates of byDomino.values()) {
+      if (!candidates.length) return null;
+    }
+
+    return { all, byNode, byDomino };
+  }
+
+  function firstForcedPlacement(domains) {
+    for (const candidates of domains.byNode.values()) {
+      if (candidates.length === 1) return candidates[0];
+    }
+
+    for (const candidates of domains.byDomino.values()) {
+      if (candidates.length === 1) return candidates[0];
+    }
+
+    return null;
+  }
+
+  function nextPlacementCandidates(graph, remainingDominoes, valuesByNode, usedNodes) {
+    const domains = candidateDomains(graph, remainingDominoes, valuesByNode, usedNodes);
+    if (!domains) return [];
+    let best = domains.all;
+
+    for (const candidates of domains.byNode.values()) {
       if (!candidates.length) return [];
       if (!best || candidates.length < best.length) {
         best = candidates;
@@ -105,37 +218,6 @@
     }
 
     return best ?? [];
-  }
-
-  function placementCandidatesForNode(graph, nodeId, remainingDominoes, valuesByNode, usedNodes) {
-    const candidates = [];
-    const emptyNeighbors = emptyNeighborIds(graph, nodeId, usedNodes)
-      .sort((a, b) => emptyNeighborIds(graph, a, usedNodes).length - emptyNeighborIds(graph, b, usedNodes).length);
-
-    for (const neighborId of emptyNeighbors) {
-      for (let dominoIndex = 0; dominoIndex < remainingDominoes.length; dominoIndex += 1) {
-        const entry = remainingDominoes[dominoIndex];
-        const nextDominoes = withoutIndex(remainingDominoes, dominoIndex);
-
-        for (const orientation of orientations(entry.domino)) {
-          const placement = {
-            domino: entry.domino,
-            topNode: nodeId,
-            bottomNode: neighborId,
-            values: {
-              [nodeId]: orientation.top,
-              [neighborId]: orientation.bottom
-            }
-          };
-
-          if (placeIsStillPossible(graph, placement, valuesByNode, usedNodes, nextDominoes)) {
-            candidates.push({ placement, nextDominoes });
-          }
-        }
-      }
-    }
-
-    return candidates;
   }
 
   function emptyNeighborIds(graph, nodeId, usedNodes) {
