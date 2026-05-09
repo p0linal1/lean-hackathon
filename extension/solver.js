@@ -353,12 +353,12 @@
 
       const state = readState();
       const backendResult = await requestSolvedState(state);
-      const backendSolution = normalizeSolution(backendResult.solvedState);
-      const source = backendResult.solverImplemented && backendSolution ? "backend" : "frontend";
-      const solution = backendSolution || solve(backendResult.solvedState);
+      const backendSolution = backendResult.solved ? backendAssignmentToSolution(backendResult.assignment) : null;
+      const source = backendSolution ? "backend" : "frontend";
+      const solution = backendSolution || solve(state);
       console.log(`${LOG_PREFIX} solution (${source})`, solution);
 
-      renderSolutionOverlay(solution, backendResult.solvedState);
+      renderSolutionOverlay(solution, state);
       setStatus(`Solved by ${source}`);
     } catch (error) {
       setStatus(String(error?.message ?? error));
@@ -383,24 +383,30 @@
     }
 
     const payload = await response.json();
-    if (!payload?.ok || !payload.solvedState) {
-      throw new Error("Lean server did not return a solved state");
-    }
-
-    if (payload.solverImplemented === false) {
-      console.info(`${LOG_PREFIX} backend solver stubbed; frontend fallback will render solution`);
+    if (!payload?.ok) {
+      throw new Error("Lean server returned an error response");
     }
 
     return {
-      solvedState: payload.solvedState,
-      solverImplemented: payload.solverImplemented === true
+      solved: payload.solved === true,
+      assignment: payload.assignment ?? null
     };
   }
 
-  function normalizeSolution(solvedState) {
-    const solution = solvedState?.solution;
-    if (!solution?.placements || !solution?.valuesByNode) return null;
-    return solution;
+  function backendAssignmentToSolution(assignment) {
+    if (!Array.isArray(assignment) || !assignment.length) return null;
+    const placements = assignment.map((entry, i) => ({
+      domino: { id: `domino-${i + 1}`, top: entry.domino.left, bottom: entry.domino.right },
+      topNode: entry.fst,
+      bottomNode: entry.snd,
+      values: {
+        [entry.fst]: entry.domino.left,
+        [entry.snd]: entry.domino.right
+      }
+    }));
+    const valuesByNode = {};
+    for (const p of placements) Object.assign(valuesByNode, p.values);
+    return { placements, valuesByNode };
   }
 
   function renderSolutionOverlay(solution, state) {
