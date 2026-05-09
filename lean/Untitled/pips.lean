@@ -97,15 +97,14 @@ inductive ConstraintSpec where
   | sum   (ns : List Node) (target : Nat) (ty : SumConstraintType)
   | equiv (ns : List Node) (target : Nat)
 
-/-- Extract the value at a node, defaulting to 0 if unassigned. -/
-def nodeValueD (a : AssignmentSpec) (n : Node) : Nat :=
-  (nodeValue a n).getD 0
-
 def SatisfiesConstraint (a : AssignmentSpec) : ConstraintSpec → Prop
-  | .sum ns target .eq  => (ns.map (nodeValueD a)).sum = target
-  | .sum ns target .lt  => (ns.map (nodeValueD a)).sum < target
-  | .sum ns target .gt  => (ns.map (nodeValueD a)).sum > target
-  | .equiv ns target    => ∀ n ∈ ns, nodeValueD a n = target
+  | .sum ns target .eq  => (∀ n ∈ ns, (nodeValue a n).isSome) ∧
+                            (ns.filterMap (nodeValue a)).sum = target
+  | .sum ns target .lt  => (∀ n ∈ ns, (nodeValue a n).isSome) ∧
+                            (ns.filterMap (nodeValue a)).sum < target
+  | .sum ns target .gt  => (∀ n ∈ ns, (nodeValue a n).isSome) ∧
+                            (ns.filterMap (nodeValue a)).sum > target
+  | .equiv ns target    => ∀ n ∈ ns, nodeValue a n = some target
 
 def SatisfiesAllConstraints (a : AssignmentSpec) (cs : List ConstraintSpec) : Prop :=
   ∀ c ∈ cs, SatisfiesConstraint a c
@@ -165,19 +164,26 @@ inductive Constraint where
   | equiv (ns : List Node) (c : Nat)
 deriving Repr, BEq, Hashable
 
-def nodeValueImpl (a : AssignmentImpl) (n : Node) : Nat :=
+def nodeValueImpl (a : AssignmentImpl) (n : Node) : Option Nat :=
   match a.find? (λ (_, n₁, _) => n₁ == n) with
-  | some (d, _, _) => d.left
+  | some (d, _, _) => some d.left
   | none =>
     match a.find? (λ (_, _, n₂) => n₂ == n) with
-    | some (d, _, _) => d.right
-    | none => 0
+    | some (d, _, _) => some d.right
+    | none => none
 
 def checkConstraint (a : AssignmentImpl) : Constraint → Bool
-  | .sum ns target .eq  => (ns.map (nodeValueImpl a)).sum == target
-  | .sum ns target .lt  => (ns.map (nodeValueImpl a)).sum < target
-  | .sum ns target .gt  => (ns.map (nodeValueImpl a)).sum > target
-  | .equiv ns target    => ns.all (λ n => nodeValueImpl a n == target)
+  | .sum ns target .eq  =>
+    let vals := ns.filterMap (nodeValueImpl a)
+    vals.length == ns.length && vals.sum == target
+  | .sum ns target .lt  =>
+    let vals := ns.filterMap (nodeValueImpl a)
+    vals.length == ns.length && vals.sum < target
+  | .sum ns target .gt  =>
+    let vals := ns.filterMap (nodeValueImpl a)
+    vals.length == ns.length && vals.sum > target
+  | .equiv ns target    =>
+    ns.all (λ n => nodeValueImpl a n == some target)
 
 def checkAllConstraints (a : AssignmentImpl) (cs : List Constraint) : Bool :=
   cs.all (checkConstraint a)
