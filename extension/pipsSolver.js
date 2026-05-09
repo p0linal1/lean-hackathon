@@ -1,13 +1,14 @@
 (() => {
   function solve(state, options = {}) {
     const nodes = state?.board?.nodes ?? [];
+    const edges = state?.board?.edges ?? [];
     const dominoes = state?.dominoes ?? [];
     const constraints = state?.constraints ?? [];
 
     if (!nodes.length) throw new Error("No board nodes detected");
     if (!dominoes.length) throw new Error("No dominoes detected");
 
-    const graph = buildSolverGraph(nodes, constraints);
+    const graph = buildSolverGraph(nodes, edges, constraints);
     const remainingDominoes = dominoes.map((domino, index) => ({ domino, index }));
     const deadline = solverDeadline(options.timeoutMs);
     const result = search(graph, remainingDominoes, new Map(), [], new Set(), deadline);
@@ -25,20 +26,16 @@
     }
   }
 
-  function buildSolverGraph(nodes, constraints) {
-    const nodeById = new Map(nodes.map((node) => [node.id, node]));
-    const neighborsByNode = new Map();
+  function buildSolverGraph(nodes, edges, constraints) {
+    const neighborsByNode = new Map(nodes.map((id) => [id, []]));
 
-    for (const node of nodes) {
-      const neighbors = ["left", "right", "up", "down"]
-        .map((direction) => node[direction])
-        .filter((id) => id && nodeById.has(id));
-      neighborsByNode.set(node.id, neighbors);
+    for (const [a, b] of edges) {
+      neighborsByNode.get(a)?.push(b);
+      neighborsByNode.get(b)?.push(a);
     }
 
     return {
       nodes,
-      nodeById,
       neighborsByNode,
       constraints
     };
@@ -135,17 +132,17 @@
 
   function candidateDomains(graph, remainingDominoes, valuesByNode, usedNodes) {
     const byNode = new Map(graph.nodes
-      .filter((node) => !usedNodes.has(node.id))
-      .map((node) => [node.id, []]));
+      .filter((nodeId) => !usedNodes.has(nodeId))
+      .map((nodeId) => [nodeId, []]));
     const byDomino = new Map(remainingDominoes.map((entry) => [entry.index, []]));
     const all = [];
     const seenEdges = new Set();
 
-    for (const node of graph.nodes) {
-      if (usedNodes.has(node.id)) continue;
+    for (const nodeId of graph.nodes) {
+      if (usedNodes.has(nodeId)) continue;
 
-      for (const neighborId of emptyNeighborIds(graph, node.id, usedNodes)) {
-        const edgeKey = [node.id, neighborId].sort().join("|");
+      for (const neighborId of emptyNeighborIds(graph, nodeId, usedNodes)) {
+        const edgeKey = [nodeId, neighborId].sort().join("|");
         if (seenEdges.has(edgeKey)) continue;
         seenEdges.add(edgeKey);
 
@@ -156,10 +153,10 @@
           for (const orientation of orientations(entry.domino)) {
             const placement = {
               domino: entry.domino,
-              topNode: node.id,
+              topNode: nodeId,
               bottomNode: neighborId,
               values: {
-                [node.id]: orientation.top,
+                [nodeId]: orientation.top,
                 [neighborId]: orientation.bottom
               }
             };
@@ -173,7 +170,7 @@
               dominoIndex: entry.index
             };
             all.push(candidate);
-            byNode.get(node.id)?.push(candidate);
+            byNode.get(nodeId)?.push(candidate);
             byNode.get(neighborId)?.push(candidate);
             byDomino.get(entry.index)?.push(candidate);
           }
@@ -251,8 +248,8 @@
   }
 
   function hasDeadEnd(graph, usedNodes) {
-    return graph.nodes.some((node) =>
-      !usedNodes.has(node.id) && emptyNeighborIds(graph, node.id, usedNodes).length === 0
+    return graph.nodes.some((nodeId) =>
+      !usedNodes.has(nodeId) && emptyNeighborIds(graph, nodeId, usedNodes).length === 0
     );
   }
 

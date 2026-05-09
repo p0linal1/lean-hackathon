@@ -12,9 +12,10 @@ open Std.Internal.IO.Async.TCP
 -- ── Frontend JSON → Lean-Pips conversion ─────────────────────────────────────
 --
 -- The frontend sends game states with this shape:
---   board.nodes[]: { id: "node-N", left/right/up/down: "node-M" | null }
+--   board.nodes[]: Nat[]   (flat grid indices)
+--   board.edges[]: [Nat, Nat][]  (normalized pairs, a ≤ b)
 --   dominoes[]:    { id, top: Nat, bottom: Nat }
---   constraints[]: { nodes: ["node-N"…],
+--   constraints[]: { nodes: Nat[],
 --                    constraint: { type: "equal"|"unequal"|"sum", sign?, value? } }
 --
 -- We convert to:
@@ -33,50 +34,37 @@ private def jsonNat? (j : Lean.Json) : Option Nat :=
   | .num jn => if jn.exponent == 0 then intToNat? jn.mantissa else none
   | _       => none
 
-/-- Parse `"node-5"` → `Node ⟨5⟩`. -/
-private def parseNodeId (s : String) : Option Node :=
-  if s.startsWith "node-" then (s.drop 5).toNat?.map (⟨·⟩) else none
-
-private def getStr? (j : Lean.Json) (key : String) : Option String :=
-  match j.getObjVal? key with
-  | .ok (.str s) => some s
-  | _            => none
-
 -- ── Pip (nodes + edges) ──────────────────────────────────────────────────────
 
 def parsePip (json : Lean.Json) : Except String Pip := do
-  let boardJ  ← json.getObjVal? "board"
-  let nodesJ  ← boardJ.getObjVal? "nodes"
-  let nodesArr ← match nodesJ with
+  let boardJ ← json.getObjVal? "board"
+
+  let nodesArr ← match ← boardJ.getObjVal? "nodes" with
     | .arr a => pure a
     | _      => throw "board.nodes is not an array"
+  let nodes ← nodesArr.toList.mapM fun n => do
+    match jsonNat? n with
+    | some id => pure (Node.mk id)
+    | none    => throw s!"board.nodes element is not a nat: {n}"
 
-  let mut nodes : List Node := []
-  let mut edgeSet : List (Node × Node) := []
+  let edgesArr ← match ← boardJ.getObjVal? "edges" with
+    | .arr a => pure a
+    | _      => throw "board.edges is not an array"
+  let edges ← edgesArr.toList.mapM fun e => do
+    let pair ← match e with
+      | .arr a => pure a
+      | _      => throw "edge is not an array"
+    let a ← match pair[0]? with
+      | some j => match jsonNat? j with
+        | some n => pure n | none => throw "edge[0] is not a nat"
+      | none => throw "edge has no element 0"
+    let b ← match pair[1]? with
+      | some j => match jsonNat? j with
+        | some n => pure n | none => throw "edge[1] is not a nat"
+      | none => throw "edge has no element 1"
+    return normalizeEdge (Node.mk a) (Node.mk b)
 
-  for nodeJ in nodesArr do
-    let idStr ← match ← nodeJ.getObjVal? "id" with
-      | .str s => pure s
-      | _      => throw "node id is not a string"
-    let node ← match parseNodeId idStr with
-      | some n => pure n
-      | none   => throw s!"invalid node id: {idStr}"
-
-    nodes := nodes ++ [node]
-
-    -- Collect outgoing neighbour edges (right + down only to avoid duplicates)
-    for dir in ["right", "down"] do
-      match nodeJ.getObjVal? dir with
-      | .ok (.str s) =>
-        match parseNodeId s with
-        | some nb =>
-          let edge := normalizeEdge node nb
-          unless edgeSet.contains edge do
-            edgeSet := edgeSet ++ [edge]
-        | none => pure ()
-      | _ => pure ()
-
-  return { nodes, edges := edgeSet }
+  return { nodes, edges }
 
 -- ── Dominoes ─────────────────────────────────────────────────────────────────
 
@@ -102,10 +90,9 @@ def parseConstraints (json : Lean.Json) : Except String (List Constraint) := do
       | .arr a => pure a
       | _      => throw "constraint nodes is not an array"
     let nodes ← nodesArr.toList.mapM fun n => do
-      let s ← match n with | .str s => pure s | _ => throw "node id not a string"
-      match parseNodeId s with
-      | some nd => pure nd
-      | none    => throw s!"invalid constraint node id: {s}"
+      match jsonNat? n with
+      | some id => pure (Node.mk id)
+      | none    => throw s!"constraint node is not a nat: {n}"
     let cJ  ← c.getObjVal? "constraint"
     let ty  ← match ← cJ.getObjVal? "type" with
       | .str s => pure s | _ => throw "constraint type not a string"

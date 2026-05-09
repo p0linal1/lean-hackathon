@@ -99,19 +99,17 @@ function renderBoard(board, solution) {
     return;
   }
 
-  const nodesByIndex = new Map(
-    board.nodes.map((node) => [nodeGridIndex(node, board), node])
-  );
-  const dimensions = boardDimensions(board, nodesByIndex);
+  const nodeSet = new Set(board.nodes);
+  const dimensions = boardDimensions(board);
 
   boardEl.style.gridTemplateColumns = `repeat(${dimensions.columns}, 1fr)`;
 
   for (let index = 0; index < dimensions.rows * dimensions.columns; index += 1) {
-    const node = nodesByIndex.get(index);
+    const hasNode = nodeSet.has(index);
     const div = document.createElement("div");
-    div.className = node ? "cell" : "cell hidden";
-    div.textContent = node && solution?.valuesByNodeId?.[node.id] !== undefined
-      ? solution.valuesByNodeId[node.id]
+    div.className = hasNode ? "cell" : "cell hidden";
+    div.textContent = hasNode && solution?.valuesByNodeId?.[index] !== undefined
+      ? solution.valuesByNodeId[index]
       : "";
 
     boardEl.appendChild(div);
@@ -177,20 +175,7 @@ async function readStateFromLeanServer() {
   };
 }
 
-function nodeGridIndex(node, board) {
-  if (Number.isFinite(node.index)) return node.index;
-  if (Number.isFinite(node.row) && Number.isFinite(node.column) && board.columns) {
-    return node.row * board.columns + node.column;
-  }
-  return nodeIndex(node.id);
-}
-
-function nodeIndex(id) {
-  const match = String(id).match(/^node-(\d+)$/);
-  return match ? Number(match[1]) : -1;
-}
-
-function boardDimensions(board, nodesByIndex) {
+function boardDimensions(board) {
   if (board.rows && board.columns) {
     return {
       rows: board.rows,
@@ -198,7 +183,7 @@ function boardDimensions(board, nodesByIndex) {
     };
   }
 
-  const maxIndex = Math.max(...nodesByIndex.keys(), 0);
+  const maxIndex = Math.max(...(board.nodes ?? []), 0);
   const side = Math.ceil(Math.sqrt(maxIndex + 1));
 
   return {
@@ -226,18 +211,16 @@ function puzzleToGameState(puzzle) {
   const rows = Math.max(...activeCells.map((c) => c.row)) + 1;
   const columns = Math.max(...activeCells.map((c) => c.col)) + 1;
 
-  const nodeId = (row, col) => `node-${row * columns + col}`;
+  const nodeIndex = (row, col) => row * columns + col;
 
-  const nodes = activeCells.map(({ row, col }) => ({
-    id: nodeId(row, col),
-    index: row * columns + col,
-    row,
-    column: col,
-    left: activeSet.has(`${row},${col - 1}`) ? nodeId(row, col - 1) : null,
-    right: activeSet.has(`${row},${col + 1}`) ? nodeId(row, col + 1) : null,
-    up: activeSet.has(`${row - 1},${col}`) ? nodeId(row - 1, col) : null,
-    down: activeSet.has(`${row + 1},${col}`) ? nodeId(row + 1, col) : null
-  }));
+  const nodes = activeCells.map(({ row, col }) => nodeIndex(row, col));
+
+  const edges = [];
+  for (const { row, col } of activeCells) {
+    const id = nodeIndex(row, col);
+    if (activeSet.has(`${row},${col + 1}`)) edges.push([id, nodeIndex(row, col + 1)]);
+    if (activeSet.has(`${row + 1},${col}`)) edges.push([id, nodeIndex(row + 1, col)]);
+  }
 
   const dominoes = (puzzle.dominoes ?? []).map(([top, bottom], i) => ({
     id: `domino-${i + 1}`,
@@ -248,7 +231,7 @@ function puzzleToGameState(puzzle) {
   const constraints = (puzzle.regions ?? [])
     .filter((r) => r.type !== "empty")
     .map((region) => {
-      const nodes = (region.indices ?? []).map(([row, col]) => nodeId(row, col));
+      const regionNodes = (region.indices ?? []).map(([row, col]) => nodeIndex(row, col));
       let constraint = null;
       if (region.type === "equals") {
         constraint = { type: "equal" };
@@ -261,11 +244,11 @@ function puzzleToGameState(puzzle) {
       } else if (region.type === "greater") {
         constraint = { type: "sum", sign: ">", value: region.target };
       }
-      return constraint ? { nodes, constraint } : null;
+      return constraint ? { nodes: regionNodes, constraint } : null;
     })
     .filter(Boolean);
 
-  return { board: { rows, columns, nodes }, dominoes, constraints };
+  return { board: { rows, columns, nodes, edges }, dominoes, constraints };
 }
 
 // ── Test runner ───────────────────────────────────────────────────────────────

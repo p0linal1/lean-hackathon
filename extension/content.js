@@ -158,31 +158,6 @@
     return Number.isInteger(square) ? square : null;
   }
 
-  function boardNodeId(index) {
-    return `node-${index}`;
-  }
-
-  function neighborNodeIds(cells, cell, columns) {
-    const empty = { left: null, right: null, up: null, down: null };
-    if (!columns) return empty;
-
-    const activeIndexes = new Set(cells.filter((candidate) => candidate.active).map((candidate) => candidate.index));
-    const rows = Math.ceil(cells.length / columns);
-    const neighbors = {
-      left: cell.column > 0 ? cell.index - 1 : null,
-      right: cell.column < columns - 1 ? cell.index + 1 : null,
-      up: cell.row > 0 ? cell.index - columns : null,
-      down: cell.row < rows - 1 ? cell.index + columns : null
-    };
-
-    return Object.fromEntries(
-      Object.entries(neighbors).map(([direction, index]) => [
-        direction,
-        index !== null && activeIndexes.has(index) ? boardNodeId(index) : null
-      ])
-    );
-  }
-
   function readBoard() {
     const board = findActiveBoardElement();
     if (!board) return null;
@@ -192,11 +167,11 @@
     const columns = inferColumns(board, cells);
     const cssRows = boardContainer ? cssNumber(boardContainer, "--rows") : null;
     const rows = cssRows || (columns ? Math.ceil(cells.length / columns) : null);
+
     const flatCells = cells.map((cell, index) => {
       const style = getComputedStyle(cell);
       const hidden = hasClassPart(cell, CLASS_PARTS.hidden) || style.display === "none" || style.visibility === "hidden";
       return {
-        id: boardNodeId(index),
         index,
         row: columns ? Math.floor(index / columns) : null,
         column: columns ? index % columns : null,
@@ -205,20 +180,23 @@
       };
     });
 
-    return {
-      rows,
-      columns,
-      nodes: flatCells
-        .filter((cell) => cell.active)
-        .map((cell) => ({
-          id: cell.id,
-          index: cell.index,
-          row: cell.row,
-          column: cell.column,
-          ...neighborNodeIds(flatCells, cell, columns)
-        })),
-      element: board
-    };
+    const activeIndexes = new Set(flatCells.filter((c) => c.active).map((c) => c.index));
+    const nodes = Array.from(activeIndexes).sort((a, b) => a - b);
+    const totalRows = rows || (columns ? Math.ceil(flatCells.length / columns) : null);
+
+    // Build normalized edges: only right and down to avoid duplicates (a < b guaranteed)
+    const edges = [];
+    for (const cell of flatCells) {
+      if (!cell.active || !columns) continue;
+      if (cell.column < columns - 1 && activeIndexes.has(cell.index + 1)) {
+        edges.push([cell.index, cell.index + 1]);
+      }
+      if (totalRows !== null && cell.row < totalRows - 1 && activeIndexes.has(cell.index + columns)) {
+        edges.push([cell.index, cell.index + columns]);
+      }
+    }
+
+    return { rows, columns, nodes, edges, element: board };
   }
 
   function overlapRatio(a, b) {
@@ -360,7 +338,7 @@
   }
 
   function constraintNodes(cellIndexes) {
-    return Array.from(new Set(cellIndexes)).sort((a, b) => a - b).map(boardNodeId);
+    return Array.from(new Set(cellIndexes)).sort((a, b) => a - b);
   }
 
   function readConstraints(boardState) {
@@ -475,7 +453,8 @@
       ? {
           rows: boardState.rows,
           columns: boardState.columns,
-          nodes: boardState.nodes
+          nodes: boardState.nodes,
+          edges: boardState.edges
         }
       : null;
   }

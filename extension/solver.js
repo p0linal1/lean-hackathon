@@ -150,16 +150,13 @@
     return window.PipsSolver.solve(state);
   }
 
-  function buildSolverGraph(nodes, constraints) {
-    const nodeById = new Map(nodes.map((node) => [node.id, node]));
-    const neighborsByNode = new Map();
-    const constraintsByNode = new Map(nodes.map((node) => [node.id, []]));
+  function buildSolverGraph(nodes, edges, constraints) {
+    const neighborsByNode = new Map(nodes.map((id) => [id, []]));
+    const constraintsByNode = new Map(nodes.map((id) => [id, []]));
 
-    for (const node of nodes) {
-      const neighbors = ["left", "right", "up", "down"]
-        .map((direction) => node[direction])
-        .filter((id) => id && nodeById.has(id));
-      neighborsByNode.set(node.id, neighbors);
+    for (const [a, b] of edges) {
+      neighborsByNode.get(a)?.push(b);
+      neighborsByNode.get(b)?.push(a);
     }
 
     for (const constraint of constraints) {
@@ -170,13 +167,7 @@
       }
     }
 
-    return {
-      nodes,
-      nodeById,
-      neighborsByNode,
-      constraints,
-      constraintsByNode
-    };
+    return { nodes, neighborsByNode, constraints, constraintsByNode };
   }
 
   function orientations(domino) {
@@ -193,7 +184,7 @@
     }
 
     const nodeId = findNextEmptyNode(graph, usedNodes);
-    if (!nodeId) return null;
+    if (nodeId === null) return null;
 
     const emptyNeighbors = emptyNeighborIds(graph, nodeId, usedNodes)
       .sort((a, b) => emptyNeighborIds(graph, a, usedNodes).length - emptyNeighborIds(graph, b, usedNodes).length);
@@ -239,13 +230,13 @@
     let best = null;
     let bestEmptyNeighbors = Infinity;
 
-    for (const node of graph.nodes) {
-      if (usedNodes.has(node.id)) continue;
+    for (const nodeId of graph.nodes) {
+      if (usedNodes.has(nodeId)) continue;
 
-      const count = emptyNeighborIds(graph, node.id, usedNodes).length;
-      if (count === 0) return node.id;
+      const count = emptyNeighborIds(graph, nodeId, usedNodes).length;
+      if (count === 0) return nodeId;
       if (count < bestEmptyNeighbors) {
-        best = node.id;
+        best = nodeId;
         bestEmptyNeighbors = count;
       }
     }
@@ -292,8 +283,8 @@
   }
 
   function hasDeadEnd(graph, usedNodes) {
-    return graph.nodes.some((node) =>
-      !usedNodes.has(node.id) && emptyNeighborIds(graph, node.id, usedNodes).length === 0
+    return graph.nodes.some((nodeId) =>
+      !usedNodes.has(nodeId) && emptyNeighborIds(graph, nodeId, usedNodes).length === 0
     );
   }
 
@@ -422,7 +413,8 @@
     removeSolutionOverlay();
 
     const cells = directByClassTokenPrefix(board, CLASS_PARTS.cell);
-    const nodeIndexes = new Map((state.board.nodes ?? []).map((node) => [node.id, node.index]));
+    // node IDs are cell indexes (flat grid position)
+    const nodeIndexes = new Map((state.board.nodes ?? []).map((id) => [id, id]));
 
     solutionOverlay = document.createElement("div");
     solutionOverlay.dataset.nytPipsSolverOverlay = "true";
@@ -558,7 +550,8 @@
 
     const boardRect = board.getBoundingClientRect();
     const cells = directByClassTokenPrefix(board, CLASS_PARTS.cell);
-    const nodeByIndex = new Map((state.board.nodes ?? []).map((node) => [node.index, node.id]));
+    // node IDs are cell indexes, so the lookup is identity
+    const nodeByIndex = new Map((state.board.nodes ?? []).map((id) => [id, id]));
 
     return byClassTokenPrefix(CLASS_PARTS.domino, document)
       .filter((domino) => isVisible(domino) && overlapRatio(domino.getBoundingClientRect(), boardRect) > 0.2)
