@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "NYT Pips State Logger",
+  "version": "0.1.0",
+  "description": "Logs the NYT Pips board shape, constraints, and available dominoes to the console.",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.nytimes.com/games/pips*",
+        "https://www.nytimes.com/puzzles/pips*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
