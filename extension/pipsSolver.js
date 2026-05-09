@@ -1,7 +1,8 @@
 (() => {
   function solve(state, options = {}) {
-    const nodes = state?.board?.nodes ?? [];
-    const edges = state?.board?.edges ?? [];
+    const graphInput = normalizeBoardGraph(state?.board);
+    const nodes = graphInput.nodes;
+    const edges = graphInput.edges;
     const dominoes = state?.dominoes ?? [];
     const constraints = state?.constraints ?? [];
     const fixedPlacements = state?.fixedPlacements ?? [];
@@ -45,9 +46,39 @@
 
     return {
       nodes,
+      nodeSet: new Set(nodes),
       neighborsByNode,
       constraints
     };
+  }
+
+  function normalizeBoardGraph(board) {
+    const rawNodes = board?.nodes ?? [];
+    const nodeId = (node) => typeof node === "object" && node !== null ? node.id : node;
+    const nodes = rawNodes.map(nodeId);
+
+    if (Array.isArray(board?.edges) && board.edges.length) {
+      return { nodes, edges: board.edges };
+    }
+
+    const nodeIds = new Set(nodes);
+    const edges = [];
+    const seen = new Set();
+
+    for (const node of rawNodes) {
+      if (typeof node !== "object" || node === null) continue;
+      const from = nodeId(node);
+      for (const direction of ["left", "right", "up", "down"]) {
+        const to = node[direction];
+        if (to === null || to === undefined || !nodeIds.has(to)) continue;
+        const key = [from, to].sort().join("|");
+        if (seen.has(key)) continue;
+        seen.add(key);
+        edges.push([from, to]);
+      }
+    }
+
+    return { nodes, edges };
   }
 
   function seedFixedPlacements(graph, fixedPlacements, remainingDominoes) {
@@ -56,7 +87,7 @@
     const placements = [];
 
     for (const placement of fixedPlacements) {
-      if (!graph.nodeById.has(placement.topNode) || !graph.nodeById.has(placement.bottomNode)) {
+      if (!graph.nodeSet.has(placement.topNode) || !graph.nodeSet.has(placement.bottomNode)) {
         throw new Error("Placed domino does not match the board");
       }
       if (usedNodes.has(placement.topNode) || usedNodes.has(placement.bottomNode)) {

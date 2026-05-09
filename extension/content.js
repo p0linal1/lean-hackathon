@@ -493,7 +493,16 @@
   function readPlacedPlacements(boardState) {
     if (!boardState?.element) return [];
 
-    const nodeByIndex = new Map(boardState.nodes.map((node) => [node.index, node]));
+    const nodeByIndex = new Map(boardState.nodes.map((index) => [
+      index,
+      {
+        id: index,
+        index,
+        row: boardState.columns ? Math.floor(index / boardState.columns) : null,
+        column: boardState.columns ? index % boardState.columns : null
+      }
+    ]));
+    const edgeSet = new Set((boardState.edges ?? []).map(([left, right]) => [left, right].sort((a, b) => a - b).join("|")));
     const cells = directByClassTokenPrefix(boardState.element, CLASS_PARTS.cell);
     const boardRect = boardState.element.getBoundingClientRect();
     const seen = new Set();
@@ -512,7 +521,7 @@
 
         const nodes = orderedCells.map((item) => item.node);
         if (nodes[0].id === nodes[1].id) return [];
-        if (!Object.values(nodes[0]).includes(nodes[1].id)) return [];
+        if (!edgeSet.has([nodes[0].id, nodes[1].id].sort((a, b) => a - b).join("|"))) return [];
 
         return [{
           domino: {

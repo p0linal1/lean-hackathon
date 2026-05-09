@@ -84,17 +84,16 @@ function renderBoard(board, solution) {
     return;
   }
 
-  const nodesByIndex = new Map(
-    board.nodes.map((node) => [nodeGridIndex(node, board), node])
-  );
-  const nodesById = new Map(board.nodes.map((node) => [node.id, node]));
+  const nodes = board.nodes.map((node) => normalizeBoardNode(node, board));
+  const nodesByIndex = new Map(nodes.map((node) => [node.index, node]));
+  const nodesById = new Map(nodes.map((node) => [node.id, node]));
   const dimensions = boardDimensions(board, nodesByIndex);
 
   boardEl.style.gridTemplateColumns = `repeat(${dimensions.columns}, var(--popup-board-cell-size))`;
   boardEl.style.gridTemplateRows = `repeat(${dimensions.rows}, var(--popup-board-cell-size))`;
 
   if (!(solution?.placements?.length)) {
-    for (const node of board.nodes) {
+    for (const node of nodes) {
       const div = document.createElement("div");
       div.className = "cell";
       div.style.gridColumn = `${node.column + 1}`;
@@ -248,6 +247,7 @@ async function readStateFromLeanServer() {
 }
 
 function nodeGridIndex(node, board) {
+  if (Number.isFinite(node)) return node;
   if (Number.isFinite(node.index)) return node.index;
   if (Number.isFinite(node.row) && Number.isFinite(node.column) && board.columns) {
     return node.row * board.columns + node.column;
@@ -256,8 +256,29 @@ function nodeGridIndex(node, board) {
 }
 
 function nodeIndex(id) {
+  if (Number.isFinite(id)) return id;
   const match = String(id).match(/^node-(\d+)$/);
   return match ? Number(match[1]) : -1;
+}
+
+function normalizeBoardNode(node, board) {
+  const index = nodeGridIndex(node, board);
+  if (typeof node === "object" && node !== null) {
+    return {
+      ...node,
+      id: node.id ?? index,
+      index,
+      row: Number.isFinite(node.row) ? node.row : board.columns ? Math.floor(index / board.columns) : null,
+      column: Number.isFinite(node.column) ? node.column : board.columns ? index % board.columns : null
+    };
+  }
+
+  return {
+    id: index,
+    index,
+    row: board.columns ? Math.floor(index / board.columns) : null,
+    column: board.columns ? index % board.columns : null
+  };
 }
 
 function boardDimensions(board, nodesByIndex) {
@@ -296,18 +317,14 @@ function puzzleToGameState(puzzle) {
   const rows = Math.max(...activeCells.map((c) => c.row)) + 1;
   const columns = Math.max(...activeCells.map((c) => c.col)) + 1;
 
-  const nodeId = (row, col) => `node-${row * columns + col}`;
-
-  const nodes = activeCells.map(({ row, col }) => ({
-    id: nodeId(row, col),
-    index: row * columns + col,
-    row,
-    column: col,
-    left: activeSet.has(`${row},${col - 1}`) ? nodeId(row, col - 1) : null,
-    right: activeSet.has(`${row},${col + 1}`) ? nodeId(row, col + 1) : null,
-    up: activeSet.has(`${row - 1},${col}`) ? nodeId(row - 1, col) : null,
-    down: activeSet.has(`${row + 1},${col}`) ? nodeId(row + 1, col) : null
-  }));
+  const nodeId = (row, col) => row * columns + col;
+  const nodes = activeCells.map(({ row, col }) => nodeId(row, col));
+  const edges = [];
+  for (const { row, col } of activeCells) {
+    const id = nodeId(row, col);
+    if (activeSet.has(`${row},${col + 1}`)) edges.push([id, nodeId(row, col + 1)]);
+    if (activeSet.has(`${row + 1},${col}`)) edges.push([id, nodeId(row + 1, col)]);
+  }
 
   const dominoes = (puzzle.dominoes ?? []).map(([top, bottom], i) => ({
     id: `domino-${i + 1}`,
@@ -335,7 +352,7 @@ function puzzleToGameState(puzzle) {
     })
     .filter(Boolean);
 
-  return { board: { rows, columns, nodes }, dominoes, constraints };
+  return { board: { rows, columns, nodes, edges }, dominoes, constraints };
 }
 
 // ── Test runner ───────────────────────────────────────────────────────────────
