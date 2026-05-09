@@ -64,6 +64,18 @@ def DominoesPlacedAdjacently (spec : PuzzleSpec) (a : AssignmentSpec) : Prop :=
 def CoversAllNodes (spec : PuzzleSpec) (a : AssignmentSpec) : Prop :=
   ∀ n ∈ spec.nodes, ∃ p ∈ a, (p.fst = n ∨ p.snd = n)
 
+/-- Flatten all nodes from an assignment. -/
+def assignmentNodes (a : AssignmentSpec) : List Node :=
+  a.flatMap (λ p => [p.fst, p.snd])
+
+/-- All assigned nodes are globally unique (no node appears twice). -/
+def AllNodesDistinct (a : AssignmentSpec) : Prop :=
+  a.flatMap (λ p => [p.fst, p.snd]) |>.Nodup
+
+/-- Each domino's two nodes are distinct. -/
+def InternallyDisjoint (a : AssignmentSpec) : Prop :=
+  ∀ p ∈ a, p.fst ≠ p.snd
+
 /-- No node is used by more than one placement. -/
 def NoOverlap (a : AssignmentSpec) : Prop :=
   ∀ p₁ ∈ a, ∀ p₂ ∈ a, p₁ ≠ p₂ →
@@ -83,7 +95,7 @@ def nodeValue (a : AssignmentSpec) (n : Node) : Option Nat :=
 def ValidAssignment (spec : PuzzleSpec) (a : AssignmentSpec) : Prop :=
   DominoesPlacedAdjacently spec a ∧
   CoversAllNodes spec a ∧
-  NoOverlap a
+  AllNodesDistinct a
 
 -- Constraints (spec level)
 
@@ -146,12 +158,11 @@ def assignedNodes (a : AssignmentImpl) : List Node :=
 
 def coversAllNodesImpl (pip : Pip) (a : AssignmentImpl) : Bool :=
   let nodes := assignedNodes a
-  pip.nodes.all (λ n => nodes.contains n) &&
-  nodes.length == pip.nodes.length
+  pip.nodes.all (λ n => nodes.contains n)
 
 def noOverlapImpl (a : AssignmentImpl) : Bool :=
   let nodes := assignedNodes a
-  nodes.eraseDups.length == nodes.length
+  nodes.Pairwise (· != ·)
 
 def assignmentIsValid (pip : Pip) (a : AssignmentImpl) : Bool :=
   allPlacedAdjacently pip a &&
@@ -228,37 +239,53 @@ theorem allPlacedAdjacently_correct (pip : Pip) (a : AssignmentImpl) :
   · intro h d n₁ n₂ hmem
     exact (adjacent_iff_mem pip n₁ n₂).mpr (h _ d n₁ n₂ hmem rfl)
 
--- Sub-lemma: coversAllNodesImpl decides CoversAllNodes
--- Requires: List.contains ↔ ∈ (via LawfulBEq) and length equality reasoning
-theorem coversAllNodesImpl_correct (pip : Pip) (a : AssignmentImpl) :
+-- DAG of sub-lemmas:
+-- 1. noOverlapImpl_correct (no preconditions — the root)
+-- 2. coversAllNodesImpl_correct (assumes AllNodesDistinct)
+
+
+-- Level 1: noOverlapImpl decides AllNodesDistinct (no deps)
+-- Both sides are Pairwise (· ≠ ·) on the same flattened node list
+theorem noOverlapImpl_correct (a : AssignmentImpl) :
+    noOverlapImpl a = true ↔
+    AllNodesDistinct (toAssignmentSpec a) := by
+  unfold noOverlapImpl AllNodesDistinct toAssignmentSpec assignedNodes
+  simp [List.Nodup, List.flatMap_map, decide_eq_true_eq]
+
+-- Level 2: coversAllNodesImpl decides CoversAllNodes (assumes AllNodesDistinct)
+-- With distinctness, the length check becomes: exactly the right number of nodes
+-- and the all-contains check becomes: every board node is assigned
+theorem coversAllNodesImpl_correct (pip : Pip) (a : AssignmentImpl)
+    (_h_distinct : AllNodesDistinct (toAssignmentSpec a)) :
     coversAllNodesImpl pip a = true ↔
     CoversAllNodes (pip.toSpec) (toAssignmentSpec a) := by
   unfold coversAllNodesImpl CoversAllNodes toAssignmentSpec Pip.toSpec assignedNodes
-  simp [Bool.and_eq_true, List.all_eq_true, List.mem_map]
-  sorry
+  simp [List.all_eq_true, List.mem_map]
+  constructor
+  · intro hcovers n hmem
+    obtain ⟨d, n₁, n₂, hin, hor⟩ := hcovers n hmem
+    exact ⟨{ domino := d, fst := n₁, snd := n₂ }, ⟨d, n₁, n₂, hin, rfl⟩,
+           hor.imp Eq.symm Eq.symm⟩
+  · intro h n hmem
+    obtain ⟨p, ⟨d, n₁, n₂, hin, heq⟩, hor⟩ := h n hmem
+    subst heq; simp at hor
+    exact ⟨d, n₁, n₂, hin, hor.imp Eq.symm Eq.symm⟩
 
--- Sub-lemma: noOverlapImpl decides NoOverlap
--- Requires: List.eraseDups.length = List.length ↔ List.Nodup, then Nodup ↔ pairwise ≠
-theorem noOverlapImpl_correct (pip : Pip) (a : AssignmentImpl) :
-    noOverlapImpl a = true ↔
-    NoOverlap (toAssignmentSpec a) := by
-  unfold noOverlapImpl NoOverlap toAssignmentSpec assignedNodes
-  simp [List.mem_map]
-  sorry
-
+-- Main bridge theorem
 theorem assignmentIsValid_correct (pip : Pip) (a : AssignmentImpl) :
     assignmentIsValid pip a = true ↔
     ValidAssignment (pip.toSpec) (toAssignmentSpec a) := by
   unfold assignmentIsValid ValidAssignment
   simp [Bool.and_eq_true]
-  exact ⟨
-    fun ⟨⟨h1, h2⟩, h3⟩ => ⟨
-      (allPlacedAdjacently_correct pip a).mp h1,
-      (coversAllNodesImpl_correct pip a).mp h2,
-      (noOverlapImpl_correct pip a).mp h3⟩,
-    fun ⟨h1, h2, h3⟩ => ⟨
-      ⟨(allPlacedAdjacently_correct pip a).mpr h1,
-       (coversAllNodesImpl_correct pip a).mpr h2⟩,
-      (noOverlapImpl_correct pip a).mpr h3⟩⟩
+  constructor
+  · intro ⟨⟨h1, h2⟩, h3⟩
+    have hDistinct := (noOverlapImpl_correct a).mp h3
+    exact ⟨(allPlacedAdjacently_correct pip a).mp h1,
+           (coversAllNodesImpl_correct pip a hDistinct).mp h2,
+           hDistinct⟩
+  · intro ⟨h1, h2, h3⟩
+    exact ⟨⟨(allPlacedAdjacently_correct pip a).mpr h1,
+            (coversAllNodesImpl_correct pip a h3).mpr h2⟩,
+           (noOverlapImpl_correct a).mpr h3⟩
 
 end Bridge
