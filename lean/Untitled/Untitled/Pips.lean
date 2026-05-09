@@ -108,8 +108,6 @@ deriving Repr, DecidableEq, BEq, Hashable
 inductive ConstraintSpec where
   | sum   (ns : List Node) (target : Nat) (ty : SumConstraintType)
   | equiv (ns : List Node)
-  /-- All nodes in the region have pairwise distinct values. -/
-  | neq   (ns : List Node)
 
 def SatisfiesConstraint (a : AssignmentSpec) : ConstraintSpec → Prop
   | .sum ns target .eq  => (∀ n ∈ ns, (nodeValue a n).isSome) ∧
@@ -120,8 +118,6 @@ def SatisfiesConstraint (a : AssignmentSpec) : ConstraintSpec → Prop
                             (ns.filterMap (nodeValue a)).sum > target
   | .equiv ns           => (∀ n ∈ ns, (nodeValue a n).isSome) ∧
                             ∃ v, ∀ n ∈ ns, nodeValue a n = some v
-  | .neq ns             => (∀ n ∈ ns, (nodeValue a n).isSome) ∧
-                            (ns.filterMap (nodeValue a)).Nodup
 
 def SatisfiesAllConstraints (a : AssignmentSpec) (cs : List ConstraintSpec) : Prop :=
   ∀ c ∈ cs, SatisfiesConstraint a c
@@ -166,7 +162,7 @@ def coversAllNodesImpl (pip : Pip) (a : AssignmentImpl) : Bool :=
 
 def noOverlapImpl (a : AssignmentImpl) : Bool :=
   let nodes := assignedNodes a
-  nodes.Pairwise (· != ·)
+  nodes.Nodup
 
 def assignmentIsValid (pip : Pip) (a : AssignmentImpl) : Bool :=
   allPlacedAdjacently pip a &&
@@ -176,10 +172,8 @@ def assignmentIsValid (pip : Pip) (a : AssignmentImpl) : Bool :=
 -- Constraint checking (implementation)
 
 inductive Constraint where
-  | sum    (ns : List Node) (c : Nat) (t : SumConstraintType)
-  | equiv  (ns : List Node)
-  /-- All nodes in the region have pairwise distinct values. -/
-  | allNeq (ns : List Node)
+  | sum   (ns : List Node) (c : Nat) (t : SumConstraintType)
+  | equiv (ns : List Node)
 deriving Repr, BEq, Hashable
 
 def nodeValueImpl (a : AssignmentImpl) (n : Node) : Option Nat :=
@@ -206,9 +200,6 @@ def checkConstraint (a : AssignmentImpl) : Constraint → Bool
     match vals with
     | [] => true
     | v :: rest => rest.all (· == v)
-  | .allNeq ns          =>
-    let vals := ns.filterMap (nodeValueImpl a)
-    vals.length == ns.length && vals.eraseDups.length == vals.length
 
 def checkAllConstraints (a : AssignmentImpl) (cs : List Constraint) : Bool :=
   cs.all (checkConstraint a)
@@ -254,7 +245,6 @@ theorem allPlacedAdjacently_correct (pip : Pip) (a : AssignmentImpl) :
 
 
 -- Level 1: noOverlapImpl decides AllNodesDistinct (no deps)
--- Both sides are Pairwise (· ≠ ·) on the same flattened node list
 theorem noOverlapImpl_correct (a : AssignmentImpl) :
     noOverlapImpl a = true ↔
     AllNodesDistinct (toAssignmentSpec a) := by
@@ -296,5 +286,153 @@ theorem assignmentIsValid_correct (pip : Pip) (a : AssignmentImpl) :
     exact ⟨⟨(allPlacedAdjacently_correct pip a).mpr h1,
             (coversAllNodesImpl_correct pip a h3).mpr h2⟩,
            (noOverlapImpl_correct a).mpr h3⟩
+
+/-- Convert an implementation constraint to a spec constraint. -/
+def toConstraintSpec : Constraint → ConstraintSpec
+  | .sum ns target ty => .sum ns target ty
+  | .equiv ns => .equiv ns
+
+/-- Convert a list of implementation constraints to spec constraints. -/
+def toConstraintSpecs (cs : List Constraint) : List ConstraintSpec :=
+  cs.map toConstraintSpec
+
+private theorem find_map_comm {α β : Type} (f : α → β) (p : β → Bool) (l : List α) :
+    (l.map f).find? p = (l.find? (p ∘ f)).map f := by
+  induction l with
+  | nil => simp [List.find?, List.map]
+  | cons a as ih =>
+    simp only [List.map, List.find?, Function.comp]
+    cases hp : p (f a)
+    · simp [ih]
+    · simp
+
+private theorem find_fst_comp (a : AssignmentImpl) (n : Node) :
+    List.find? ((fun p : Placement => p.fst == n) ∘
+      fun x : Domino × Node × Node => { domino := x.fst, fst := x.2.fst, snd := x.2.snd }) a =
+    List.find? (fun x : Domino × Node × Node => x.2.fst == n) a := by
+  congr 1
+
+private theorem find_snd_comp (a : AssignmentImpl) (n : Node) :
+    List.find? ((fun p : Placement => p.snd == n) ∘
+      fun x : Domino × Node × Node => { domino := x.fst, fst := x.2.fst, snd := x.2.snd }) a =
+    List.find? (fun x : Domino × Node × Node => x.2.snd == n) a := by
+  congr 1
+
+/-- nodeValueImpl on impl assignment agrees with nodeValue on spec assignment. -/
+theorem nodeValue_correct (a : AssignmentImpl) (n : Node) :
+    nodeValueImpl a n = nodeValue (toAssignmentSpec a) n := by
+  simp only [nodeValueImpl, nodeValue, toAssignmentSpec, find_map_comm, Option.map,
+             find_fst_comp, find_snd_comp]
+  cases hfst : List.find? (fun x => x.2.fst == n) a with
+  | none =>
+    simp
+    cases hsnd : List.find? (fun x => x.2.snd == n) a with
+    | none => simp
+    | some val => obtain ⟨d, n₁, n₂⟩ := val; simp
+  | some val => obtain ⟨d, n₁, n₂⟩ := val; simp
+
+/-- nodeValueImpl and nodeValue produce the same filterMap results. -/
+theorem filterMap_nodeValue_correct (a : AssignmentImpl) (ns : List Node) :
+    ns.filterMap (nodeValueImpl a) = ns.filterMap (nodeValue (toAssignmentSpec a)) := by
+  congr 1; funext n; exact nodeValue_correct a n
+
+/-- nodeValueImpl isSome ↔ nodeValue isSome. -/
+theorem nodeValue_isSome_correct (a : AssignmentImpl) (n : Node) :
+    (nodeValueImpl a n).isSome = (nodeValue (toAssignmentSpec a) n).isSome := by
+  rw [nodeValue_correct]
+
+private theorem all_eq_first_iff_exists {α : Type} [BEq α] [LawfulBEq α]
+    (l : List α) (hl : l ≠ []) :
+    (match l with | [] => true | v :: rest => rest.all (· == v)) = true ↔
+    ∃ v, ∀ x ∈ l, x = v := by
+  match l, hl with
+  | v :: rest, _ => simp [List.all_eq_true]
+
+private theorem filterMap_all_some {α β : Type} (f : α → Option β) (l : List α)
+    (h : ∀ x ∈ l, (f x).isSome = true) :
+    (l.filterMap f).length = l.length := by
+  induction l with
+  | nil => simp
+  | cons a as ih =>
+    have ha := h a (by simp)
+    rw [Option.isSome_iff_exists] at ha
+    obtain ⟨v, hv⟩ := ha
+    have ih' := ih (fun x hx => h x (List.mem_cons_of_mem a hx))
+    simp [List.filterMap, hv, ih']
+
+private theorem filterMap_ne_nil_of_ne_nil {α β : Type} (f : α → Option β) (l : List α)
+    (hl : l ≠ []) (h : ∀ x ∈ l, (f x).isSome = true) :
+    l.filterMap f ≠ [] := by
+  intro heq
+  have hlen := filterMap_all_some f l h
+  rw [heq] at hlen; simp at hlen
+  exact hl (List.eq_nil_of_length_eq_zero hlen.symm)
+
+private theorem filterMap_all_eq_iff
+    (f : Node → Option Nat) (l : List Node)
+    (hSome : ∀ n ∈ l, (f n).isSome = true) :
+    (match l.filterMap f with | [] => true | v :: rest => rest.all (· == v)) = true ↔
+    ∃ v, ∀ n ∈ l, f n = some v := by
+  match l with
+  | [] => simp [List.filterMap]
+  | a :: as =>
+    have hne : (a :: as).filterMap f ≠ [] :=
+      filterMap_ne_nil_of_ne_nil f (a :: as) (by simp) hSome
+    match hfm : (a :: as).filterMap f, hne with
+    | v :: rest, _ =>
+      simp only [List.all_eq_true]
+      constructor
+      · intro hAllEq
+        refine ⟨v, fun n hn => ?_⟩
+        have hnSome := hSome n hn
+        rw [Option.isSome_iff_exists] at hnSome
+        obtain ⟨w, hw⟩ := hnSome
+        have hmem : w ∈ v :: rest := by
+          rw [← hfm, List.mem_filterMap]; exact ⟨n, hn, by rw [hw]⟩
+        cases hmem with
+        | head => rw [← hw]
+        | tail _ hm =>
+          have heq := LawfulBEq.eq_of_beq (hAllEq w hm)
+          rw [heq] at hw; rw [← hw]
+      · intro ⟨val, hval⟩
+        intro x hx
+        have hv_mem : v ∈ v :: rest := .head ..
+        rw [← hfm, List.mem_filterMap] at hv_mem
+        obtain ⟨nv, hnv, hfnv⟩ := hv_mem
+        have hval_nv := hval nv hnv
+        rw [hval_nv] at hfnv; simp at hfnv
+        have hmem : x ∈ v :: rest := List.mem_cons_of_mem v hx
+        rw [← hfm, List.mem_filterMap] at hmem
+        obtain ⟨nx, hnx, hfnx⟩ := hmem
+        have hval_nx := hval nx hnx
+        rw [hval_nx] at hfnx; simp at hfnx
+        rw [← hfnv, ← hfnx]
+        simp [BEq.beq]
+
+/-- checkConstraint decides SatisfiesConstraint. -/
+theorem checkConstraint_correct (a : AssignmentImpl) (c : Constraint) :
+    checkConstraint a c = true ↔
+    SatisfiesConstraint (toAssignmentSpec a) (toConstraintSpec c) := by
+  cases c with
+  | sum ns target ty =>
+    cases ty <;> simp [checkConstraint, SatisfiesConstraint, toConstraintSpec,
+                        filterMap_nodeValue_correct, Bool.and_eq_true]
+  | equiv ns =>
+    simp [checkConstraint, SatisfiesConstraint, toConstraintSpec,
+          filterMap_nodeValue_correct, Bool.and_eq_true]
+    intro hSome
+    exact filterMap_all_eq_iff (nodeValue (toAssignmentSpec a)) ns hSome
+
+/-- checkAllConstraints decides SatisfiesAllConstraints. -/
+theorem checkAllConstraints_correct (a : AssignmentImpl) (cs : List Constraint) :
+    checkAllConstraints a cs = true ↔
+    SatisfiesAllConstraints (toAssignmentSpec a) (toConstraintSpecs cs) := by
+  unfold checkAllConstraints SatisfiesAllConstraints toConstraintSpecs
+  simp [List.all_eq_true, List.mem_map]
+  constructor
+  · intro h c hmem
+    exact (checkConstraint_correct a c).mp (h c hmem)
+  · intro h c hmem
+    exact (checkConstraint_correct a c).mpr (h c hmem)
 
 end Bridge
