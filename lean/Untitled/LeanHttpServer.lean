@@ -57,8 +57,6 @@ def handleRequest (stateRef : IO.Ref (Option Lean.Json)) (method path body : Str
       pure <| errorResponse "400 Bad Request" s!"Invalid JSON body: {err}"
     | .ok json =>
       stateRef.set (some json)
-      IO.println "[lean-http-server] received solve request:"
-      IO.println json.pretty
       pure <| jsonResponse "200 OK" <| .mkObj
         [ ("ok", true)
         , ("solverImplemented", false)
