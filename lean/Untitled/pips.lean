@@ -59,20 +59,20 @@ def NoOverlap (a : AssignmentSpec) : Prop :=
     p₁.fst ≠ p₂.fst ∧ p₁.fst ≠ p₂.snd ∧
     p₁.snd ≠ p₂.fst ∧ p₁.snd ≠ p₂.snd
 
-/-- A domino's pip values match the node values given by a valuation. -/
-def DominoMatchesNodes (val : Node → Nat) (p : Placement) : Prop :=
-  (val p.fst = p.domino.left ∧ val p.snd = p.domino.right) ∨
-  (val p.fst = p.domino.right ∧ val p.snd = p.domino.left)
-
-def DominoValuesMatch (val : Node → Nat) (a : AssignmentSpec) : Prop :=
-  ∀ p ∈ a, DominoMatchesNodes val p
+/-- Derive the value at a node from the assignment: which domino half covers it. -/
+def nodeValue (a : AssignmentSpec) (n : Node) : Option Nat :=
+  match a.find? (λ p => p.fst == n) with
+  | some p => some p.domino.left
+  | none =>
+    match a.find? (λ p => p.snd == n) with
+    | some p => some p.domino.right
+    | none => none
 
 /-- Top-level validity: the assignment is a correct solution. -/
-def ValidAssignment (spec : PuzzleSpec) (val : Node → Nat) (a : AssignmentSpec) : Prop :=
+def ValidAssignment (spec : PuzzleSpec) (a : AssignmentSpec) : Prop :=
   DominoesPlacedAdjacently spec a ∧
   CoversAllNodes spec a ∧
-  NoOverlap a ∧
-  DominoValuesMatch val a
+  NoOverlap a
 
 -- Constraints (spec level)
 
@@ -86,18 +86,22 @@ inductive ConstraintSpec where
   | sum   (ns : List Node) (target : Nat) (ty : SumConstraintType)
   | equiv (ns : List Node) (target : Nat)
 
-def SatisfiesConstraint (val : Node → Nat) : ConstraintSpec → Prop
-  | .sum ns target .eq  => (ns.map val).sum = target
-  | .sum ns target .lt  => (ns.map val).sum < target
-  | .sum ns target .gt  => (ns.map val).sum > target
-  | .equiv ns target    => ∀ n ∈ ns, val n = target
+/-- Extract the value at a node, defaulting to 0 if unassigned (valid assignments cover all nodes). -/
+def nodeValueD (a : AssignmentSpec) (n : Node) : Nat :=
+  (nodeValue a n).getD 0
 
-def SatisfiesAllConstraints (val : Node → Nat) (cs : List ConstraintSpec) : Prop :=
-  ∀ c ∈ cs, SatisfiesConstraint val c
+def SatisfiesConstraint (a : AssignmentSpec) : ConstraintSpec → Prop
+  | .sum ns target .eq  => (ns.map (nodeValueD a)).sum = target
+  | .sum ns target .lt  => (ns.map (nodeValueD a)).sum < target
+  | .sum ns target .gt  => (ns.map (nodeValueD a)).sum > target
+  | .equiv ns target    => ∀ n ∈ ns, nodeValueD a n = target
+
+def SatisfiesAllConstraints (a : AssignmentSpec) (cs : List ConstraintSpec) : Prop :=
+  ∀ c ∈ cs, SatisfiesConstraint a c
 
 /-- A puzzle is solvable if there exists a valid assignment satisfying all constraints. -/
-def Solvable (spec : PuzzleSpec) (val : Node → Nat) (cs : List ConstraintSpec) : Prop :=
-  ∃ a : AssignmentSpec, ValidAssignment spec val a ∧ SatisfiesAllConstraints val cs
+def Solvable (spec : PuzzleSpec) (cs : List ConstraintSpec) : Prop :=
+  ∃ a : AssignmentSpec, ValidAssignment spec a ∧ SatisfiesAllConstraints a cs
 
 end Spec
 
@@ -183,9 +187,7 @@ def toAssignmentSpec (a : AssignmentImpl) : AssignmentSpec :=
 --
 -- theorem assignmentIsValid_correct (pip : Pip) (a : AssignmentImpl) :
 --     assignmentIsValid pip a = true ↔
---     (DominoesPlacedAdjacently (pip.toSpec) (toAssignmentSpec a) ∧
---      CoversAllNodes (pip.toSpec) (toAssignmentSpec a) ∧
---      NoOverlap (toAssignmentSpec a)) := by
+--     ValidAssignment (pip.toSpec) (toAssignmentSpec a) := by
 --   sorry
 
 end Bridge
