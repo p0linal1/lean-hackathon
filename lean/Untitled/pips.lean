@@ -51,7 +51,7 @@ def DominoesPlacedAdjacently (spec : PuzzleSpec) (a : AssignmentSpec) : Prop :=
 
 /-- Every node in the board appears in exactly one placement. -/
 def CoversAllNodes (spec : PuzzleSpec) (a : AssignmentSpec) : Prop :=
-  ∀ n ∈ spec.nodes, ∃! p, p ∈ a ∧ (p.fst = n ∨ p.snd = n)
+  ∀ n ∈ spec.nodes, ∃ p ∈ a, (p.fst = n ∨ p.snd = n)
 
 /-- No node is used by more than one placement. -/
 def NoOverlap (a : AssignmentSpec) : Prop :=
@@ -178,16 +178,14 @@ def Pip.toSpec (pip : Pip) : PuzzleSpec where
 def toAssignmentSpec (a : AssignmentImpl) : AssignmentSpec :=
   a.map (λ (d, n₁, n₂) => { domino := d, fst := n₁, snd := n₂ })
 
-/--
-The key bridge theorem to prove:
-the Bool implementation decides the Prop-based spec.
-
-theorem assignmentIsValid_correct (pip : Pip) (a : AssignmentImpl) :
-    assignmentIsValid pip a = true ↔
-    (DominoesPlacedAdjacently (pip.toSpec) (toAssignmentSpec a) ∧
-     CoversAllNodes (pip.toSpec) (toAssignmentSpec a) ∧
-     NoOverlap (toAssignmentSpec a)) := by
-  sorry
--/
+-- The key bridge theorem to prove:
+-- the Bool implementation decides the Prop-based spec.
+--
+-- theorem assignmentIsValid_correct (pip : Pip) (a : AssignmentImpl) :
+--     assignmentIsValid pip a = true ↔
+--     (DominoesPlacedAdjacently (pip.toSpec) (toAssignmentSpec a) ∧
+--      CoversAllNodes (pip.toSpec) (toAssignmentSpec a) ∧
+--      NoOverlap (toAssignmentSpec a)) := by
+--   sorry
 
 end Bridge
