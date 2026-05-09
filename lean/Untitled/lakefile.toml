@@ -5,9 +5,6 @@ defaultTargets = ["untitled"]
 [[lean_lib]]
 name = "Untitled"
 
-[[lean_lib]]
-name = "pips"
-
 [[lean_exe]]
 name = "untitled"
 root = "Main"

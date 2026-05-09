@@ -1,0 +1,240 @@
+{
+    "board": {
+        "rows": 5,
+        "columns": 6,
+        "nodes": [
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24
+        ],
+        "edges": [
+            [
+                5,
+                11
+            ],
+            [
+                6,
+                7
+            ],
+            [
+                6,
+                12
+            ],
+            [
+                7,
+                8
+            ],
+            [
+                8,
+                9
+            ],
+            [
+                9,
+                10
+            ],
+            [
+                10,
+                11
+            ],
+            [
+                11,
+                17
+            ],
+            [
+                12,
+                18
+            ],
+            [
+                17,
+                23
+            ],
+            [
+                18,
+                19
+            ],
+            [
+                18,
+                24
+            ],
+            [
+                19,
+                20
+            ],
+            [
+                20,
+                21
+            ],
+            [
+                21,
+                22
+            ],
+            [
+                22,
+                23
+            ]
+        ]
+    },
+    "dominoes": [
+        {
+            "id": "domino-1",
+            "top": 4,
+            "bottom": 0
+        },
+        {
+            "id": "domino-2",
+            "top": 2,
+            "bottom": 4
+        },
+        {
+            "id": "domino-3",
+            "top": 1,
+            "bottom": 0
+        },
+        {
+            "id": "domino-4",
+            "top": 1,
+            "bottom": 5
+        },
+        {
+            "id": "domino-5",
+            "top": 4,
+            "bottom": 3
+        },
+        {
+            "id": "domino-6",
+            "top": 1,
+            "bottom": 4
+        },
+        {
+            "id": "domino-7",
+            "top": 6,
+            "bottom": 4
+        },
+        {
+            "id": "domino-8",
+            "top": 3,
+            "bottom": 0
+        }
+    ],
+    "dominoNodeMap": {
+        "domino-1": {
+            "Top": "domino-1-top",
+            "Bottom": "domino-1-bottom"
+        },
+        "domino-2": {
+            "Top": "domino-2-top",
+            "Bottom": "domino-2-bottom"
+        },
+        "domino-3": {
+            "Top": "domino-3-top",
+            "Bottom": "domino-3-bottom"
+        },
+        "domino-4": {
+            "Top": "domino-4-top",
+            "Bottom": "domino-4-bottom"
+        },
+        "domino-5": {
+            "Top": "domino-5-top",
+            "Bottom": "domino-5-bottom"
+        },
+        "domino-6": {
+            "Top": "domino-6-top",
+            "Bottom": "domino-6-bottom"
+        },
+        "domino-7": {
+            "Top": "domino-7-top",
+            "Bottom": "domino-7-bottom"
+        },
+        "domino-8": {
+            "Top": "domino-8-top",
+            "Bottom": "domino-8-bottom"
+        }
+    },
+    "fixedPlacements": [],
+    "constraints": [
+        {
+            "nodes": [
+                5
+            ],
+            "constraint": {
+                "type": "sum",
+                "sign": ">",
+                "value": 3
+            }
+        },
+        {
+            "nodes": [
+                6,
+                7
+            ],
+            "constraint": {
+                "type": "equal"
+            }
+        },
+        {
+            "nodes": [
+                8,
+                9
+            ],
+            "constraint": {
+                "type": "sum",
+                "sign": ">",
+                "value": 9
+            }
+        },
+        {
+            "nodes": [
+                10,
+                11,
+                17
+            ],
+            "constraint": {
+                "type": "sum",
+                "sign": "=",
+                "value": 1
+            }
+        },
+        {
+            "nodes": [
+                18,
+                19
+            ],
+            "constraint": {
+                "type": "equal"
+            }
+        },
+        {
+            "nodes": [
+                20,
+                21
+            ],
+            "constraint": {
+                "type": "equal"
+            }
+        },
+        {
+            "nodes": [
+                22,
+                23
+            ],
+            "constraint": {
+                "type": "sum",
+                "sign": "<",
+                "value": 3
+            }
+        }
+    ]
+}

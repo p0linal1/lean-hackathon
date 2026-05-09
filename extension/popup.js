@@ -35,7 +35,7 @@ async function readPuzzle(options = {}) {
   setStatus("Reading");
 
   try {
-    const response = await readStateFromCurrentTab().catch(readStateFromLeanServer);
+    const response = await readStateFromCurrentTab();
 
     currentState = response.state;
     solveButton.disabled = !currentState?.board?.nodes?.length;
@@ -49,13 +49,16 @@ async function readPuzzle(options = {}) {
   }
 }
 
-function solvePuzzle() {
+async function solvePuzzle() {
   if (!currentState?.board?.nodes) return;
 
   setStatus("Solving");
 
   try {
-    const solution = window.PipsSolver.solve(currentState);
+    const solution = await solveWithBackend(currentState).catch((error) => {
+      console.warn("[Pips Helper] Backend solve failed, falling back to frontend solver", error);
+      return window.PipsSolver.solve(currentState);
+    });
     renderState(currentState, solution);
     savePopupState({
       currentState,
@@ -67,6 +70,25 @@ function solvePuzzle() {
     setStatus("Error");
     console.warn("[Pips Helper]", error);
   }
+}
+
+async function solveWithBackend(state) {
+  const response = await fetch(LEAN_SERVER_STATE_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(state)
+  });
+
+  if (!response.ok) {
+    throw new Error(`Lean server returned HTTP ${response.status}`);
+  }
+
+  const payload = await response.json();
+  if (payload?.solution?.placements?.length) return payload.solution;
+  if (payload?.placements?.length) return payload;
+  throw new Error("Lean server did not return a solved placement set");
 }
 
 function renderState(state, solution = null) {
@@ -225,25 +247,6 @@ async function sendMessageToCurrentTab(message) {
   }
 
   return response;
-}
-
-async function readStateFromLeanServer() {
-  const response = await fetch(LEAN_SERVER_STATE_URL);
-
-  if (!response.ok) {
-    throw new Error(`Lean server returned HTTP ${response.status}`);
-  }
-
-  const payload = await response.json();
-
-  if (!payload?.ok || !payload.solvedState) {
-    throw new Error("Lean server has no stored Pips state yet");
-  }
-
-  return {
-    ok: true,
-    state: payload.solvedState
-  };
 }
 
 function nodeGridIndex(node, board) {

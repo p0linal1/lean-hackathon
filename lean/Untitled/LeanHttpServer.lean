@@ -2,7 +2,7 @@ import Lean
 import Lean.Data.Json
 import Std
 import Std.Internal.Async.TCP
-import pips
+import Untitled.Pips
 
 open Std
 open Std.Net
@@ -21,7 +21,7 @@ open Std.Internal.IO.Async.TCP
 -- We convert to:
 --   Pip        { nodes : List Node, edges : List (Node × Node) }
 --   List Domino  { left right : Nat }   (top→left, bottom→right)
---   List Constraint (equiv | allNeq | sum)
+--   List Constraint (equiv | sum)
 
 namespace PipsConvert
 
@@ -98,7 +98,7 @@ def parseConstraints (json : Lean.Json) : Except String (List Constraint) := do
       | .str s => pure s | _ => throw "constraint type not a string"
     match ty with
     | "equal"   => return some (Constraint.equiv nodes)
-    | "unequal" => return some (Constraint.allNeq nodes)
+    | "unequal" => return none
     | "sum"     =>
         let value ← match jsonNat? (← cJ.getObjVal? "value") with
           | some n => pure n | none => throw "sum value is not a nat"
@@ -144,8 +144,6 @@ private def constraintJ (c : Constraint) : Lean.Json :=
              ]
   | .equiv ns =>
       .mkObj [("type", .str "equiv"), ("nodes", .arr (ns.map nodeJ).toArray)]
-  | .allNeq ns =>
-      .mkObj [("type", .str "allNeq"), ("nodes", .arr (ns.map nodeJ).toArray)]
 
 def toResponseJson (pip : Pip) (dominoes : List Domino) (constraints : List Constraint) :
     Lean.Json :=
@@ -229,14 +227,6 @@ def handleRequest (stateRef : IO.Ref (Option Lean.Json)) (method path body : Str
             ]
       | _ =>
         pure <| errorResponse "400 Bad Request" "JSON body must be an object"
-  else if method = "GET" && path = "/solve" then
-    match ← stateRef.get with
-    | some json =>
-      pure <| jsonResponse "200 OK" <| .mkObj
-        [ ("ok", true), ("solvedState", json) ]
-    | none =>
-      pure <| jsonResponse "200 OK" <| .mkObj
-        [ ("ok", true), ("solvedState", Lean.Json.null) ]
   else
     pure <| errorResponse "404 Not Found" s!"No route for {method} {path}"
 
@@ -277,7 +267,7 @@ def run : IO Unit := do
   server.bind (localhost defaultPort)
   server.listen 128
   IO.println s!"lean-http-server listening on http://127.0.0.1:{defaultPort}/"
-  IO.println "routes: GET /health, GET /lean/version, POST /solve, GET /solve, OPTIONS *"
+  IO.println "routes: GET /health, GET /lean/version, POST /solve, OPTIONS *"
   serveLoop stateRef server
 
 end LeanHttpServer
