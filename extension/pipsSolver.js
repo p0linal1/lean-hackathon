@@ -69,16 +69,54 @@
         : null;
     }
 
-    const nodeId = findNextEmptyNode(graph, usedNodes);
-    if (!nodeId) return null;
+    const candidates = nextPlacementCandidates(graph, remainingDominoes, valuesByNode, usedNodes);
+    if (!candidates.length) return null;
 
+    for (const { placement, nextDominoes } of candidates) {
+      applyPlacement(placement, valuesByNode, usedNodes);
+
+      if (!hasDeadEnd(graph, usedNodes)) {
+        const result = search(graph, nextDominoes, valuesByNode, [...placements, placement], usedNodes, deadline);
+        if (result) return result;
+      }
+
+      undoPlacement(placement, valuesByNode, usedNodes);
+    }
+
+    return null;
+  }
+
+  function withoutIndex(items, index) {
+    return items.slice(0, index).concat(items.slice(index + 1));
+  }
+
+  function nextPlacementCandidates(graph, remainingDominoes, valuesByNode, usedNodes) {
+    let best = null;
+
+    for (const node of graph.nodes) {
+      if (usedNodes.has(node.id)) continue;
+
+      const candidates = placementCandidatesForNode(graph, node.id, remainingDominoes, valuesByNode, usedNodes);
+      if (!candidates.length) return [];
+      if (!best || candidates.length < best.length) {
+        best = candidates;
+        if (best.length === 1) break;
+      }
+    }
+
+    return best ?? [];
+  }
+
+  function placementCandidatesForNode(graph, nodeId, remainingDominoes, valuesByNode, usedNodes) {
+    const candidates = [];
     const emptyNeighbors = emptyNeighborIds(graph, nodeId, usedNodes)
       .sort((a, b) => emptyNeighborIds(graph, a, usedNodes).length - emptyNeighborIds(graph, b, usedNodes).length);
-    if (!emptyNeighbors.length) return null;
 
     for (const neighborId of emptyNeighbors) {
       for (let dominoIndex = 0; dominoIndex < remainingDominoes.length; dominoIndex += 1) {
         const entry = remainingDominoes[dominoIndex];
+        const nextDominoes = withoutIndex(remainingDominoes, dominoIndex);
+
         for (const orientation of orientations(entry.domino)) {
           const placement = {
             domino: entry.domino,
@@ -90,68 +128,30 @@
             }
           };
 
-          if (!placeIsStillPossible(graph, placement, valuesByNode, usedNodes)) continue;
-
-          applyPlacement(placement, valuesByNode, usedNodes);
-
-          if (!hasDeadEnd(graph, usedNodes)) {
-            const nextDominoes = withoutIndex(remainingDominoes, dominoIndex);
-            const result = search(graph, nextDominoes, valuesByNode, [...placements, placement], usedNodes, deadline);
-            if (result) return result;
+          if (placeIsStillPossible(graph, placement, valuesByNode, usedNodes, nextDominoes)) {
+            candidates.push({ placement, nextDominoes });
           }
-
-          undoPlacement(placement, valuesByNode, usedNodes);
         }
       }
     }
 
-    return null;
-  }
-
-  function withoutIndex(items, index) {
-    return items.slice(0, index).concat(items.slice(index + 1));
-  }
-
-  function findNextEmptyNode(graph, usedNodes) {
-    let best = null;
-    let bestEmptyNeighbors = Infinity;
-
-    for (const node of graph.nodes) {
-      if (usedNodes.has(node.id)) continue;
-
-      const count = emptyNeighborIds(graph, node.id, usedNodes).length;
-      if (count === 0) return node.id;
-      if (count < bestEmptyNeighbors) {
-        best = node.id;
-        bestEmptyNeighbors = count;
-      }
-    }
-
-    return best;
+    return candidates;
   }
 
   function emptyNeighborIds(graph, nodeId, usedNodes) {
     return (graph.neighborsByNode.get(nodeId) ?? []).filter((neighborId) => !usedNodes.has(neighborId));
   }
 
-  function placeIsStillPossible(graph, placement, valuesByNode, usedNodes) {
+  function placeIsStillPossible(graph, placement, valuesByNode, usedNodes, remainingDominoes) {
     if (usedNodes.has(placement.topNode) || usedNodes.has(placement.bottomNode)) return false;
 
     valuesByNode.set(placement.topNode, placement.values[placement.topNode]);
     valuesByNode.set(placement.bottomNode, placement.values[placement.bottomNode]);
-    const possible = affectedConstraints(placement, graph.constraintsByNode)
-      .every((constraint) => constraintStillPossible(constraint, valuesByNode));
+    const possible = constraintsStillPossible(graph.constraints, valuesByNode, remainingDominoes);
     valuesByNode.delete(placement.topNode);
     valuesByNode.delete(placement.bottomNode);
 
     return possible;
-  }
-
-  function affectedConstraints(placement, constraintsByNode) {
-    return Array.from(new Set([
-      ...(constraintsByNode.get(placement.topNode) ?? []),
-      ...(constraintsByNode.get(placement.bottomNode) ?? [])
-    ]));
   }
 
   function applyPlacement(placement, valuesByNode, usedNodes) {
@@ -174,29 +174,68 @@
     );
   }
 
-  function constraintStillPossible({ nodes, constraint }, valuesByNode) {
+  function constraintsStillPossible(constraints, valuesByNode, remainingDominoes) {
+    const remainingValues = availableHalfValues(remainingDominoes);
+    return constraints.every((item) =>
+      constraintStillPossible(item, valuesByNode, remainingValues)
+    );
+  }
+
+  function availableHalfValues(remainingDominoes) {
+    return remainingDominoes.flatMap(({ domino }) => [domino.top, domino.bottom]);
+  }
+
+  function constraintStillPossible({ nodes, constraint }, valuesByNode, remainingValues) {
     const values = (nodes ?? []).map((node) => valuesByNode.get(node));
     const assigned = values.filter((value) => value !== undefined);
-    if (!assigned.length) return true;
+    const unassignedCount = values.length - assigned.length;
 
     if (constraint?.type === "equal") {
-      return assigned.every((value) => value === assigned[0]);
+      if (assigned.length && !assigned.every((value) => value === assigned[0])) return false;
+      if (!unassignedCount) return true;
+      if (assigned.length) {
+        return countValue(remainingValues, assigned[0]) >= unassignedCount;
+      }
+      return uniqueValues(remainingValues).some((value) =>
+        countValue(remainingValues, value) >= unassignedCount
+      );
     }
 
     if (constraint?.type === "unequal") {
-      return new Set(assigned).size === assigned.length;
+      if (new Set(assigned).size !== assigned.length) return false;
+      if (!unassignedCount) return true;
+      const assignedValues = new Set(assigned);
+      const availableDistinct = uniqueValues(remainingValues)
+        .filter((value) => !assignedValues.has(value)).length;
+      return availableDistinct >= unassignedCount;
     }
 
     if (constraint?.type === "sum") {
-      const sum = assigned.reduce((total, value) => total + value, 0);
+      if (remainingValues.length < unassignedCount) return false;
+      const assignedSum = assigned.reduce((total, value) => total + value, 0);
       const target = constraint.value;
       if (!Number.isFinite(target)) return true;
-      if (constraint.sign === "<") return sum < target;
-      if (constraint.sign === ">") return assigned.length === values.length ? sum > target : true;
-      return assigned.length === values.length ? sum === target : sum <= target;
+
+      const sorted = [...remainingValues].sort((a, b) => a - b);
+      const minPossible = assignedSum + sorted.slice(0, unassignedCount)
+        .reduce((total, value) => total + value, 0);
+      const largestValues = unassignedCount ? sorted.slice(-unassignedCount) : [];
+      const maxPossible = assignedSum + largestValues.reduce((total, value) => total + value, 0);
+
+      if (constraint.sign === "<") return minPossible < target;
+      if (constraint.sign === ">") return maxPossible > target;
+      return minPossible <= target && target <= maxPossible;
     }
 
     return true;
+  }
+
+  function uniqueValues(values) {
+    return Array.from(new Set(values));
+  }
+
+  function countValue(values, target) {
+    return values.filter((value) => value === target).length;
   }
 
   function constraintsSatisfied(constraints, valuesByNode) {
