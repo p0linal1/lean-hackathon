@@ -58,34 +58,19 @@ async function solvePuzzle() {
   setStatus("Solving");
 
   try {
-    const { solution, source } = await solveCurrentState(currentState);
-    setSolveSource(source);
+    const solution = await solveWithBackend(currentState);
+    setSolveSource("backend");
     renderState(currentState, solution);
     savePopupState({
       currentState,
       solution,
       status: "Solved",
-      solveSource: source
+      solveSource: "backend"
     });
     setStatus("Solved");
   } catch (error) {
     setStatus("Error");
     console.warn("[Pips Helper]", error);
-  }
-}
-
-async function solveCurrentState(state) {
-  try {
-    return {
-      solution: await solveWithBackend(state),
-      source: "backend"
-    };
-  } catch (error) {
-    console.warn("[Pips Helper] Backend solve failed, falling back to frontend solver", error);
-    return {
-      solution: window.PipsSolver.solve(state),
-      source: "frontend"
-    };
   }
 }
 
@@ -296,7 +281,6 @@ function setStatus(status) {
 function setSolveSource(source) {
   solveSourceEl.classList.toggle("hidden", !source);
   solveSourceEl.classList.toggle("backend", source === "backend");
-  solveSourceEl.classList.toggle("frontend", source === "frontend");
   solveSourceEl.textContent = source ? `Solved: ${source}` : "";
 }
 
