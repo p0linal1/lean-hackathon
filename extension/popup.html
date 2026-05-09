@@ -8,15 +8,25 @@
     <main>
       <header>
         <h1>Pips Helper</h1>
-        <span id="status">Ready</span>
+        <span id="status" class="status-badge">Ready</span>
       </header>
 
-      <button id="readButton">Read puzzle</button>
-      <button id="solveButton" disabled>Solve</button>
+      <div class="button-row">
+        <button id="readButton">Read puzzle</button>
+        <button id="solveButton" disabled>Solve</button>
+      </div>
 
       <section id="summary"></section>
-      <section id="board"></section>
-      <section id="dominoes"></section>
+
+      <div id="board-section" class="panel hidden">
+        <div class="panel-label">Board</div>
+        <div id="board"></div>
+      </div>
+
+      <div id="dominoes-section" class="panel hidden">
+        <div class="panel-label">Dominoes</div>
+        <div id="dominoes"></div>
+      </div>
 
       <details>
         <summary>Debug JSON</summary>

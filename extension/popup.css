@@ -2,13 +2,18 @@ body {
   width: 380px;
   margin: 0;
   font-family: system-ui, sans-serif;
-  background: #e8eaee;
+  background: #f0f1f5;
   color: #1b1b1b;
 }
 
 main {
-  padding: 14px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
+
+/* ── Header ── */
 
 header {
   display: flex;
@@ -18,57 +23,171 @@ header {
 
 h1 {
   margin: 0;
-  font-size: 20px;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+
+.status-badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 99px;
+  background: #e2e4ea;
+  color: #555;
+  transition: background 0.15s, color 0.15s;
+}
+
+.status-badge.reading   { background: #dbeafe; color: #1d4ed8; }
+.status-badge.detected  { background: #dcfce7; color: #166534; }
+.status-badge.solving   { background: #fef9c3; color: #854d0e; }
+.status-badge.solved    { background: #dcfce7; color: #166534; }
+.status-badge.error     { background: #fee2e2; color: #991b1b; }
+
+/* ── Buttons ── */
+
+.button-row {
+  display: flex;
+  gap: 8px;
 }
 
 button {
-  margin-top: 12px;
-  padding: 8px 10px;
-  border: 1px solid #ccc;
+  flex: 1;
+  padding: 9px 12px;
+  border: 1px solid #d1d5db;
   border-radius: 8px;
-  background: white;
-  font-weight: 700;
+  background: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
 }
+
+button:hover:not(:disabled) {
+  background: #f8f9fb;
+  border-color: #9ca3af;
+}
+
+button:active:not(:disabled) {
+  background: #f0f1f5;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ── Summary ── */
+
+#summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.summary-pill {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 10px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 99px;
+  color: #374151;
+}
+
+/* ── Panels (board + dominoes) ── */
+
+.panel {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.panel.hidden {
+  display: none;
+}
+
+.panel-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9ca3af;
+  margin-bottom: 8px;
+}
+
+/* ── Board ── */
 
 #board {
   display: grid;
-  margin-top: 14px;
-  border: 2px solid #222;
-  background: #222;
+  border: 2px solid #374151;
+  background: #374151;
+  gap: 1px;
+  border-radius: 4px;
+  overflow: hidden;
   aspect-ratio: 1;
 }
 
 .cell {
   display: grid;
   place-items: center;
-  border: 1px solid #555;
-  background: #fff7da;
+  background: #fefce8;
   font-weight: 800;
-  font-size: 20px;
+  font-size: 18px;
+  color: #1b1b1b;
 }
 
 .cell.hidden {
-  background: #222;
+  background: #374151;
 }
+
+/* ── Dominoes ── */
 
 #dominoes {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 6px;
-  margin-top: 12px;
 }
 
 .domino {
-  padding: 8px;
-  border: 1px solid #ccc;
+  padding: 6px 4px;
+  border: 1px solid #e5e7eb;
   border-radius: 8px;
-  background: white;
+  background: #f9fafb;
   text-align: center;
-  font-weight: 800;
+  font-size: 13px;
+  font-weight: 700;
+  color: #374151;
+}
+
+/* ── Debug ── */
+
+details {
+  font-size: 12px;
+}
+
+details summary {
+  cursor: pointer;
+  color: #9ca3af;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  user-select: none;
+}
+
+details summary:hover {
+  color: #6b7280;
 }
 
 pre {
+  margin: 6px 0 0;
   max-height: 180px;
   overflow: auto;
   font-size: 11px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 8px;
 }

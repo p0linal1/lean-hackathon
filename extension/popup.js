@@ -6,7 +6,9 @@ const solveButton = document.querySelector("#solveButton");
 const statusEl = document.querySelector("#status");
 const summaryEl = document.querySelector("#summary");
 const boardEl = document.querySelector("#board");
+const boardSection = document.querySelector("#board-section");
 const dominoesEl = document.querySelector("#dominoes");
+const dominoesSection = document.querySelector("#dominoes-section");
 const debugEl = document.querySelector("#debug");
 
 readButton.addEventListener("click", readPuzzle);
@@ -52,15 +54,21 @@ function renderState(state, solution = null) {
   const board = state.board;
   const activeNodeCount = board?.nodes?.length ?? 0;
 
-  summaryEl.innerHTML = `
-    <div>Board: ${board?.rows ?? "?"} x ${board?.columns ?? "?"}</div>
-    <div>Active cells: ${activeNodeCount}</div>
-    <div>Constraints: ${state.constraints?.length ?? 0}</div>
-    <div>Dominoes: ${state.dominoes?.length ?? 0}</div>
-  `;
+  const pills = [
+    `Board: ${board?.rows ?? "?"} × ${board?.columns ?? "?"}`,
+    `Cells: ${activeNodeCount}`,
+    `Constraints: ${state.constraints?.length ?? 0}`,
+    `Dominoes: ${state.dominoes?.length ?? 0}`,
+  ];
+  summaryEl.innerHTML = pills
+    .map(text => `<span class="summary-pill">${text}</span>`)
+    .join("");
 
   renderBoard(board, solution);
   renderDominoes(state.dominoes ?? []);
+
+  boardSection.classList.toggle("hidden", !Array.isArray(board?.nodes));
+  dominoesSection.classList.toggle("hidden", !(state.dominoes?.length));
 
   debugEl.textContent = JSON.stringify(state, null, 2);
 }
@@ -103,8 +111,12 @@ function renderDominoes(dominoes) {
   }
 }
 
+const STATUS_CLASSES = ["reading", "detected", "solving", "solved", "error"];
+
 function setStatus(status) {
   statusEl.textContent = status;
+  STATUS_CLASSES.forEach(cls => statusEl.classList.remove(cls));
+  statusEl.classList.add(status.toLowerCase());
 }
 
 async function readStateFromCurrentTab() {
