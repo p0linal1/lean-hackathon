@@ -1,5 +1,5 @@
 let currentState = null;
-const LEAN_SERVER_STATE_URL = "http://127.0.0.1:8765/game-state";
+const LEAN_SERVER_STATE_URL = "http://127.0.0.1:8765/solve";
 
 const readButton = document.querySelector("#readButton");
 const solveButton = document.querySelector("#solveButton");
@@ -149,13 +149,13 @@ async function readStateFromLeanServer() {
 
   const payload = await response.json();
 
-  if (!payload?.ok || !payload.state) {
+  if (!payload?.ok || !payload.solvedState) {
     throw new Error("Lean server has no stored Pips state yet");
   }
 
   return {
     ok: true,
-    state: payload.state
+    state: payload.solvedState
   };
 }
 

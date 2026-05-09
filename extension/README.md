@@ -20,9 +20,9 @@ lake exe lean_http_server
 
 - `window.__nytPipsState` contains the latest logged snapshot.
 - `window.__nytPipsReadState()` reads and logs the current snapshot on demand.
-- `window.__nytPipsSubmitState()` reads and submits the current snapshot to `http://127.0.0.1:8765/game-state`.
+- `window.__nytPipsSubmitState()` reads and submits the current snapshot to `http://127.0.0.1:8765/solve`.
 
-The popup asks `content.js` for the current state, so it uses the same board detection path as the page logger. `solver.js` adds an in-page **Solve with brute force** button next to the puzzle and uses that same state reader before attempting to place the dominoes.
+The popup asks `content.js` for the current state, so it uses the same board detection path as the page logger. `solver.js` adds an in-page **Solve with brute force** button next to the puzzle, calls the local Lean `/solve` endpoint, and renders the returned solved state.
 
 The logged snapshot includes:
 

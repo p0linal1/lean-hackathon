@@ -1,6 +1,6 @@
 (() => {
   const LOG_PREFIX = "[NYT Pips]";
-  const LEAN_SERVER_URL = "http://127.0.0.1:8765/game-state";
+  const LEAN_SERVER_URL = "http://127.0.0.1:8765/solve";
   const CLASS_PARTS = {
     boardContainer: "Board-module_boardContainer",
     board: "Board-module_droppable",

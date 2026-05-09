@@ -9,6 +9,7 @@
     half: "Domino-module_halfDomino",
     dot: "Domino-module_dot"
   };
+  const LEAN_SOLVE_URL = "http://127.0.0.1:8765/solve";
 
   let button = null;
   let status = null;
@@ -371,11 +372,14 @@
       setStatus("Solving...");
 
       const state = readState();
-      const solution = solve(state);
-      console.log(`${LOG_PREFIX} solution`, solution);
+      const backendResult = await requestSolvedState(state);
+      const backendSolution = normalizeSolution(backendResult.solvedState);
+      const source = backendResult.solverImplemented && backendSolution ? "backend" : "frontend";
+      const solution = backendSolution || solve(backendResult.solvedState);
+      console.log(`${LOG_PREFIX} solution (${source})`, solution);
 
-      renderSolutionOverlay(solution, state);
-      setStatus("Solved (shown)");
+      renderSolutionOverlay(solution, backendResult.solvedState);
+      setStatus(`Solved by ${source}`);
     } catch (error) {
       setStatus(String(error?.message ?? error));
       console.warn(LOG_PREFIX, error);
@@ -383,6 +387,40 @@
       button.removeAttribute("aria-disabled");
       button.style.pointerEvents = "";
     }
+  }
+
+  async function requestSolvedState(state) {
+    const response = await fetch(LEAN_SOLVE_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(state)
+    });
+
+    if (!response.ok) {
+      throw new Error(`Lean server returned HTTP ${response.status}`);
+    }
+
+    const payload = await response.json();
+    if (!payload?.ok || !payload.solvedState) {
+      throw new Error("Lean server did not return a solved state");
+    }
+
+    if (payload.solverImplemented === false) {
+      console.info(`${LOG_PREFIX} backend solver stubbed; frontend fallback will render solution`);
+    }
+
+    return {
+      solvedState: payload.solvedState,
+      solverImplemented: payload.solverImplemented === true
+    };
+  }
+
+  function normalizeSolution(solvedState) {
+    const solution = solvedState?.solution;
+    if (!solution?.placements || !solution?.valuesByNode) return null;
+    return solution;
   }
 
   function renderSolutionOverlay(solution, state) {
