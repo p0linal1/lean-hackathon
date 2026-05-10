@@ -251,8 +251,6 @@ button:disabled {
   flex: 0 0 auto;
   width: calc(var(--popup-board-cell-size) * 2 + var(--pips-board-gap));
   height: var(--popup-board-cell-size);
-  min-width: 58px;
-  min-height: 29px;
   pointer-events: none;
 }
 

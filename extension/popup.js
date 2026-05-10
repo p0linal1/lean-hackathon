@@ -74,8 +74,32 @@ function puzzleSnapshot(state) {
   if (!state) return "";
   return JSON.stringify({
     board: state.board ?? null,
+    dominoes: canonicalDominoes(state.dominoes),
+    fixedPlacements: canonicalPlacements(state.fixedPlacements),
     constraints: state.constraints ?? []
   });
+}
+
+function canonicalDominoes(dominoes) {
+  return (dominoes ?? [])
+    .map((domino) => [domino.top ?? 0, domino.bottom ?? 0].sort((a, b) => a - b))
+    .sort(([leftTop, leftBottom], [rightTop, rightBottom]) =>
+      leftTop - rightTop || leftBottom - rightBottom
+    );
+}
+
+function canonicalPlacements(placements) {
+  return (placements ?? [])
+    .map((placement) => ({
+      domino: [placement.domino?.top ?? 0, placement.domino?.bottom ?? 0].sort((a, b) => a - b),
+      nodes: [placement.topNode, placement.bottomNode].sort()
+    }))
+    .sort((left, right) =>
+      String(left.nodes[0]).localeCompare(String(right.nodes[0])) ||
+      String(left.nodes[1]).localeCompare(String(right.nodes[1])) ||
+      left.domino[0] - right.domino[0] ||
+      left.domino[1] - right.domino[1]
+    );
 }
 
 function applyDetectedStateIfChanged(state) {
@@ -294,7 +318,7 @@ function scaleBoardToFit() {
   const cellFromHeight = (innerHeight - boardOverhead(rows)) / rows;
   const cellSize = Math.max(16, Math.min(58, Math.floor(Math.min(cellFromWidth, cellFromHeight))));
 
-  boardEl.style.setProperty('--popup-board-cell-size', `${cellSize}px`);
+  boardSection.style.setProperty('--popup-board-cell-size', `${cellSize}px`);
 }
 
 function renderDominoPlacement(placement, nodesById) {
