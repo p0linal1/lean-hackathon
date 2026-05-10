@@ -203,6 +203,30 @@ def parseRequestBody (raw : String) : String :=
   let parts := raw.splitOn "\r\n\r\n"
   String.intercalate "\r\n\r\n" (parts.drop 1)
 
+def requestHeadersComplete (raw : String) : Bool :=
+  (raw.splitOn "\r\n\r\n").length > 1
+
+def parseContentLength (raw : String) : Option Nat :=
+  let headerBlock := (raw.splitOn "\r\n\r\n").headD ""
+  let headerLines := (headerBlock.splitOn "\r\n").drop 1
+  headerLines.findSome? fun line =>
+    let parts := line.splitOn ":"
+    match parts with
+    | name :: valueParts =>
+      if name = "Content-Length" || name = "content-length" then
+        (String.intercalate ":" valueParts).trimAscii.toString.toNat?
+      else
+        none
+    | [] => none
+
+def requestBodyComplete (raw : String) : Bool :=
+  if !requestHeadersComplete raw then
+    false
+  else
+    match parseContentLength raw with
+    | none => true
+    | some expected => (parseRequestBody raw).toUTF8.size >= expected
+
 def jsonResponse (status : String) (json : Lean.Json) : String :=
   buildResponse status json.compress
 
@@ -262,11 +286,20 @@ def handleRequest (stateRef : IO.Ref (Option Lean.Json)) (method path body : Str
   else
     pure <| errorResponse "404 Not Found" s!"No route for {method} {path}"
 
+partial def readRequestLoop (client : Socket.Client) (raw : String) : IO String := do
+  if requestBodyComplete raw then
+    pure raw
+  else
+    let chunk? ← Async.block (Socket.Client.recv? client 65536)
+    match chunk? with
+    | none       => pure raw
+    | some chunk => readRequestLoop client (raw ++ (String.fromUTF8? chunk).getD "")
+
 def readRequest (client : Socket.Client) : IO String := do
   let chunk? ← Async.block (Socket.Client.recv? client 65536)
   match chunk? with
   | none       => pure ""
-  | some chunk => pure <| (String.fromUTF8? chunk).getD ""
+  | some chunk => readRequestLoop client ((String.fromUTF8? chunk).getD "")
 
 def respond (client : Socket.Client) (message : String) : IO Unit := do
   Async.block (Socket.Client.send client message.toUTF8)
