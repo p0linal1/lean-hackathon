@@ -1,4 +1,5 @@
 let currentState = null;
+let currentSolution = null;
 let lastBoardDimensions = null;
 let currentTabId = null;
 let currentStateSnapshot = "";
@@ -9,6 +10,8 @@ const TEST_RUN_KEY = "pipsHelper.backendTestRun.v1";
 const START_SERVER_STATUS = "Start the server!";
 const TEST_SOLVE_TIMEOUT_MS = 30000;
 const TEST_SOLVE_CONCURRENCY = 10;
+const DOMINO_PLACE_ANIMATION_MS = 900;
+const DOMINO_PLACE_STAGGER_MS = 110;
 const STATUS_CLASSES = [
   "reading",
   "detected",
@@ -46,8 +49,8 @@ async function readPuzzle(options = {}) {
   try {
     const response = await readStateFromCurrentTab();
 
-    applyDetectedState(response.state);
-    setStatus("Detected");
+    applyDetectedStateIfChanged(response.state);
+    setStatus(currentSolution ? "Solved" : "Detected");
   } catch (error) {
     if (!options.preserveOnError) setStatus("Error");
     console.warn("[Pippertons]", error);
@@ -57,6 +60,7 @@ async function readPuzzle(options = {}) {
 function applyDetectedState(state) {
   currentStateSnapshot = stateSnapshot(state);
   currentState = state;
+  currentSolution = null;
   solveButton.disabled = !currentState?.board?.nodes?.length;
   renderState(currentState);
   savePopupState({ currentState, solution: null, status: "Detected" });
@@ -66,9 +70,25 @@ function stateSnapshot(state) {
   return JSON.stringify(state ?? null);
 }
 
+function puzzleSnapshot(state) {
+  if (!state) return "";
+  return JSON.stringify({
+    board: state.board ?? null,
+    constraints: state.constraints ?? []
+  });
+}
+
 function applyDetectedStateIfChanged(state) {
   const snapshot = stateSnapshot(state);
   if (snapshot === currentStateSnapshot) return false;
+
+  if (currentSolution && puzzleSnapshot(state) === puzzleSnapshot(currentState)) {
+    currentStateSnapshot = snapshot;
+    currentState = state;
+    solveButton.disabled = !currentState?.board?.nodes?.length;
+    savePopupState({ currentState, solution: currentSolution, status: "Solved" });
+    return false;
+  }
 
   applyDetectedState(state);
   setStatus("Detected");
@@ -82,6 +102,7 @@ async function solvePuzzle() {
 
   try {
     const solution = await solveWithBackend(currentState);
+    currentSolution = solution;
     renderState(currentState, solution, { animatePlacements: true });
     savePopupState({
       currentState,
@@ -206,10 +227,25 @@ function renderBoard(board, solution, options = {}) {
     const domino = renderDominoPlacement(placement, nodesById);
     if (domino && options.animatePlacements) {
       domino.classList.add("is-placing");
-      domino.style.animationDelay = `${index * 70}ms`;
+      domino.style.animationDelay = `${index * DOMINO_PLACE_STAGGER_MS}ms`;
     }
     if (domino) boardEl.appendChild(domino);
   }
+
+  if (options.animatePlacements && solution?.placements?.length) {
+    boardEl.appendChild(renderBoardLogoSweep(solution.placements.length));
+  }
+}
+
+function renderBoardLogoSweep(placementCount) {
+  const logo = document.createElement("img");
+  logo.className = "board-logo-sweep";
+  logo.src = "logo.png";
+  logo.alt = "";
+  logo.setAttribute("aria-hidden", "true");
+  const duration = DOMINO_PLACE_ANIMATION_MS + Math.max(0, placementCount - 1) * DOMINO_PLACE_STAGGER_MS;
+  logo.style.animationDuration = `${duration}ms`;
+  return logo;
 }
 
 function renderDominoTray(dominoes, solution) {
@@ -620,9 +656,10 @@ function restorePopupState() {
   const saved = loadJson(POPUP_STATE_KEY);
   if (saved?.currentState?.board?.nodes) {
     currentState = saved.currentState;
+    currentSolution = saved.solution ?? null;
     currentStateSnapshot = stateSnapshot(currentState);
     solveButton.disabled = false;
-    renderState(currentState, saved.solution ?? null);
+    renderState(currentState, currentSolution);
     setStatus(saved.status ?? "Detected");
     restored = true;
   }
