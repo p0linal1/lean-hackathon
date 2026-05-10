@@ -52,12 +52,21 @@ def emptyNeighbors (pip : Pip) (assignment : AssignmentImpl) (n : Node) : List N
 def emptyNeighborCount (pip : Pip) (assignment : AssignmentImpl) (n : Node) : Nat :=
   (emptyNeighbors pip assignment n).length
 
-def edgeScore (pip : Pip) (assignment : AssignmentImpl) (edge : Node × Node) : Nat :=
-  Nat.min (emptyNeighborCount pip assignment edge.1) (emptyNeighborCount pip assignment edge.2)
+def unusedNodes (pip : Pip) (assignment : AssignmentImpl) : List Node :=
+  pip.nodes.filter (λ n => !isNodeUsed assignment n)
 
-def orderedUncoveredEdges (pip : Pip) (assignment : AssignmentImpl) : List (Node × Node) :=
-  (uncoveredEdges pip assignment).mergeSort
-    (λ a b => edgeScore pip assignment a <= edgeScore pip assignment b)
+def orderedUnusedNodes (pip : Pip) (assignment : AssignmentImpl) : List Node :=
+  (unusedNodes pip assignment).mergeSort
+    (λ a b => emptyNeighborCount pip assignment a <= emptyNeighborCount pip assignment b)
+
+def findNextEmptyNode (pip : Pip) (assignment : AssignmentImpl) : Option Node :=
+  (orderedUnusedNodes pip assignment).head?
+
+def dominoChoices : List Domino → List (Domino × List Domino)
+  | [] => []
+  | domino :: rest =>
+    (domino, rest) ::
+      (dominoChoices rest).map (λ (choice, withoutChoice) => (choice, domino :: withoutChoice))
 
 /-- Try placing a domino on a specific edge (n₁, n₂). The domino can be placed
     in two orientations: (left→n₁, right→n₂) or (left→n₂, right→n₁). -/
@@ -67,9 +76,11 @@ def tryPlace (domino : Domino) (n₁ n₂ : Node) : List (Domino × Node × Node
   else
     [(domino, n₁, n₂), (domino, n₂, n₁)]
 
-/-- Core backtracking solver. Tries to place remaining dominoes on uncovered edges.
-    Structurally recursive on `remaining`. -/
-def solveAux
+/-- Core backtracking solver. Picks the most constrained empty node, tries its
+    empty neighbors, then tries every remaining domino on that edge. `fuel`
+    decreases whenever a domino is removed. -/
+def solveAuxFuel
+    (fuel : Nat)
     (pip : Pip)
     (cs : List Constraint)
     (remaining : List Domino)
@@ -83,12 +94,25 @@ def solveAux
         some assignment
       else
         none
-    | domino :: rest =>
-      let edges := orderedUncoveredEdges pip assignment
-      edges.findSome? (λ (n₁, n₂) =>
-        let placements := tryPlace domino n₁ n₂
-        placements.findSome? (λ placement =>
-          solveAux pip cs rest (placement :: assignment)))
+    | _ =>
+      match fuel with
+      | 0 => none
+      | fuel' + 1 =>
+        match findNextEmptyNode pip assignment with
+        | none => none
+        | some n₁ =>
+          (emptyNeighbors pip assignment n₁).findSome? (λ n₂ =>
+            (dominoChoices remaining).findSome? (λ (domino, rest) =>
+              let placements := tryPlace domino n₁ n₂
+              placements.findSome? (λ placement =>
+                solveAuxFuel fuel' pip cs rest (placement :: assignment))))
+
+def solveAux
+    (pip : Pip)
+    (cs : List Constraint)
+    (remaining : List Domino)
+    (assignment : AssignmentImpl) : Option AssignmentImpl :=
+  solveAuxFuel remaining.length pip cs remaining assignment
 
 /-- Solve a pip puzzle: find a valid assignment of dominoes to edges satisfying all constraints. -/
 def solve (pip : Pip) (dominoes : List Domino) (cs : List Constraint) : Option AssignmentImpl :=
@@ -109,24 +133,50 @@ theorem checked_assignment_valid (pip : Pip) (a : AssignmentImpl) (cs : List Con
   exact ⟨(assignmentIsValid_correct pip a).mp hValid,
          (checkAllConstraints_correct a cs).mp hConstraints⟩
 
+/-- solveAuxFuel only returns assignments that pass both checks. -/
+theorem solveAuxFuel_sound (fuel : Nat) (pip : Pip) (cs : List Constraint)
+    (remaining : List Domino) (assignment : AssignmentImpl)
+    (a : AssignmentImpl)
+    (h : solveAuxFuel fuel pip cs remaining assignment = some a) :
+    assignmentIsValid pip a = true ∧ checkAllConstraints a cs = true := by
+  induction fuel generalizing remaining assignment with
+  | zero =>
+    cases hRemaining : remaining with
+    | nil =>
+      simp [solveAuxFuel, hRemaining] at h
+      obtain ⟨_, ⟨hValid, hConstraints⟩, heq⟩ := h
+      subst heq
+      exact ⟨hValid, hConstraints⟩
+    | cons domino rest =>
+      simp [solveAuxFuel, hRemaining] at h
+  | succ fuel' ih =>
+    cases hRemaining : remaining with
+    | nil =>
+      simp [solveAuxFuel, hRemaining] at h
+      obtain ⟨_, ⟨hValid, hConstraints⟩, heq⟩ := h
+      subst heq
+      exact ⟨hValid, hConstraints⟩
+    | cons domino rest =>
+      simp [solveAuxFuel, hRemaining] at h
+      obtain ⟨_, hnext⟩ := h
+      cases hNext : findNextEmptyNode pip assignment with
+      | none =>
+        simp [hNext] at hnext
+      | some n₁ =>
+        simp [hNext] at hnext
+        have ⟨_, _, _, _, hfindDominoes, _⟩ := List.findSome?_eq_some_iff.mp hnext
+        have ⟨_, choice, _, _, hfindPlacements, _⟩ := List.findSome?_eq_some_iff.mp hfindDominoes
+        obtain ⟨_, withoutChosen⟩ := choice
+        have ⟨_, placement, _, _, hsolve, _⟩ := List.findSome?_eq_some_iff.mp hfindPlacements
+        exact ih withoutChosen (placement :: assignment) hsolve
+
 /-- solveAux only returns assignments that pass both checks. -/
 theorem solveAux_sound (pip : Pip) (cs : List Constraint)
     (remaining : List Domino) (assignment : AssignmentImpl)
     (a : AssignmentImpl)
     (h : solveAux pip cs remaining assignment = some a) :
     assignmentIsValid pip a = true ∧ checkAllConstraints a cs = true := by
-  induction remaining generalizing assignment with
-  | nil =>
-    simp [solveAux] at h
-    obtain ⟨_, ⟨hValid, hConstraints⟩, heq⟩ := h
-    subst heq
-    exact ⟨hValid, hConstraints⟩
-  | cons domino rest ih =>
-    simp [solveAux] at h
-    obtain ⟨_, hfind⟩ := h
-    have ⟨_, edge, _, _, hinner, _⟩ := List.findSome?_eq_some_iff.mp hfind
-    have ⟨_, placement, _, _, hsolve, _⟩ := List.findSome?_eq_some_iff.mp hinner
-    exact ih (placement :: assignment) hsolve
+  exact solveAuxFuel_sound remaining.length pip cs remaining assignment a h
 
 /-- The solver is sound: if it returns an assignment, that assignment is valid
     and satisfies all constraints. -/
