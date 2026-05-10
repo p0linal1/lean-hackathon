@@ -46,6 +46,19 @@ def uncoveredEdges (pip : Pip) (assignment : AssignmentImpl) : List (Node × Nod
   pip.edges.filter (λ (a, b) =>
     !isNodeUsed assignment a && !isNodeUsed assignment b)
 
+def emptyNeighbors (pip : Pip) (assignment : AssignmentImpl) (n : Node) : List Node :=
+  (pip.neighbors n).filter (λ neighbor => !isNodeUsed assignment neighbor)
+
+def emptyNeighborCount (pip : Pip) (assignment : AssignmentImpl) (n : Node) : Nat :=
+  (emptyNeighbors pip assignment n).length
+
+def edgeScore (pip : Pip) (assignment : AssignmentImpl) (edge : Node × Node) : Nat :=
+  Nat.min (emptyNeighborCount pip assignment edge.1) (emptyNeighborCount pip assignment edge.2)
+
+def orderedUncoveredEdges (pip : Pip) (assignment : AssignmentImpl) : List (Node × Node) :=
+  (uncoveredEdges pip assignment).mergeSort
+    (λ a b => edgeScore pip assignment a <= edgeScore pip assignment b)
+
 /-- Try placing a domino on a specific edge (n₁, n₂). The domino can be placed
     in two orientations: (left→n₁, right→n₂) or (left→n₂, right→n₁). -/
 def tryPlace (domino : Domino) (n₁ n₂ : Node) : List (Domino × Node × Node) :=
@@ -71,7 +84,7 @@ def solveAux
       else
         none
     | domino :: rest =>
-      let edges := uncoveredEdges pip assignment
+      let edges := orderedUncoveredEdges pip assignment
       edges.findSome? (λ (n₁, n₂) =>
         let placements := tryPlace domino n₁ n₂
         placements.findSome? (λ placement =>
