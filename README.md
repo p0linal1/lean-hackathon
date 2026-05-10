@@ -40,6 +40,19 @@ The solver includes a two-layer formalization in Lean 4:
 - **Implementation layer** — Bool-returning decision procedures for execution
 - **Bridge layer** — Proofs that the implementation correctly decides the spec predicates
 
+#### What's Proven
+
+| Property | Branch | Description |
+|----------|--------|-------------|
+| **Correctness** | `main` | Any solution returned by the solver is valid — placements satisfy all constraints |
+| **Completeness** | `completeness-proof` | If a valid solution exists, the (less optimized) solver will find it — it never incorrectly reports "no solution" |
+
+#### Tags
+
+| Tag | Description |
+|-----|-------------|
+| `completeness-proof-done` | Completeness proof achieved for the unoptimized solver |
+
 ## Installation
 
 ### Prerequisites
