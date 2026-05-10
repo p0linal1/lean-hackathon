@@ -1,5 +1,5 @@
 import Std.Data.HashMap
-import Untitled.Pips
+import Solver.Pips
 
 open SumConstraintType
 open Std (HashMap)

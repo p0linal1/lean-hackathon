@@ -2,6 +2,17 @@
 
 A formally verified puzzle solver for the New York Times **Pips** game, built with Lean 4 and delivered as a Chrome extension.
 
+## Scope
+
+This project explores the intersection of formal verification and recreational puzzle-solving. We use Lean 4 — a language designed for mathematical proof — as both the implementation language and the verification framework for a constraint-satisfaction solver. The Chrome extension serves as a practical interface, demonstrating that formally verified software can be deployed in everyday tooling.
+
+## Aims
+
+- **Correctness by construction** — Prove that every solution the solver returns is valid, eliminating the possibility of bugs in constraint checking.
+- **Performance** — Solve any NYT Pips puzzle in under two seconds through parallelized backtracking with aggressive pruning.
+- **Usability** — Provide a seamless one-click solve experience via a browser extension that reads the puzzle directly from the page.
+- **Education** — Demonstrate how Lean 4 can be used beyond pure mathematics to build real, deployable software with verified guarantees.
+
 ## What is this?
 
 Pips is a NYT puzzle where you place dominoes on a grid subject to constraints (sums, equalities, inequalities). This project solves any Pips puzzle instantly using a backtracking solver written in Lean 4 — with mathematical proofs that the solver produces correct solutions.
@@ -63,7 +74,7 @@ The solver includes a two-layer formalization in Lean 4:
 ### 1. Build and run the Lean server
 
 ```bash
-cd lean/Untitled
+cd lean/Server
 lake build lean_http_server
 lake exe lean_http_server
 ```
@@ -85,28 +96,28 @@ The server starts on `http://127.0.0.1:8765` with these routes:
 1. Navigate to a [NYT Pips puzzle](https://www.nytimes.com/games/pips)
 2. Click the extension icon to open the side panel
 3. The puzzle state is detected automatically
-4. Click **Solve** — the solution appears with a rolling ball animation
+4. Click **Solve** — the solution appears with a rolling orge
 
 ## Project Structure
 
 ```
-├── extension/           # Chrome extension
-│   ├─�� manifest.json    # Extension manifest (MV3)
-│   ├── content.js       # Reads puzzle state from NYT DOM
-│   ���── popup.js         # Extension UI + solver communication
-│   ��── popup.html       # Side panel interface
-│   ├─��� popup.css        # Styling + animations
-│   └── background.js    # Service worker
+├── extension/              # Chrome extension
+│   ├── manifest.json       # Extension manifest (MV3)
+│   ├── content.js          # Reads puzzle state from NYT DOM
+│   ├── popup.js            # Extension UI + solver communication
+│   ├── popup.html          # Side panel interface
+│   ├── popup.css           # Styling + animations
+│   └── background.js       # Service worker
 │
-├── lean/Untitled/       # Lean 4 project
-│   ├── lakefile.toml    # Build configuration
-│   ├── lean-toolchain   # Lean version pin
-│   ├── LeanHttpServer.lean  # HTTP server + JSON parsing
-│   └── Untitled/
-│       ├── Pips.lean    # Core types, predicates, proofs
-│       └── Solver.lean  # Backtracking solver implementation
+├── lean/Server/            # Lean 4 project
+│   ├── lakefile.toml       # Build configuration
+│   ├── lean-toolchain      # Lean version pin
+│   ├── LeanHttpServer.lean # HTTP server + JSON parsing
+│   └── Solver/
+│       ├── Pips.lean       # Core types, predicates, proofs
+│       └── Solver.lean     # Backtracking solver implementation
 │
-└── pips_puzzles.json    # Test puzzle database
+└── pips_puzzles.json       # Test puzzle database
 ```
 
 ## API

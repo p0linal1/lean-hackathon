@@ -1,12 +1,12 @@
-name = "Untitled"
+name = "Server"
 version = "0.1.0"
-defaultTargets = ["untitled"]
+defaultTargets = ["server"]
 
 [[lean_lib]]
-name = "Untitled"
+name = "Solver"
 
 [[lean_exe]]
-name = "untitled"
+name = "server"
 root = "Main"
 
 [[lean_exe]]

@@ -2,8 +2,8 @@ import Lean
 import Lean.Data.Json
 import Std
 import Std.Internal.Async.TCP
-import Untitled.Pips
-import Untitled.Solver
+import Solver.Pips
+import Solver.Solver
 
 open Std
 open Std.Net
