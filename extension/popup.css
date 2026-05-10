@@ -25,8 +25,8 @@ html {
   --pips-board-border-thickness: calc(var(--pips-board-gap) / 2);
   --pips-board-cell-min-size: 23px;
   --domino-half-size: 40px;
-  --domino-border-radius: 6.8px;
-  --domino-border-thickness: 1.72px;
+  --domino-border-radius: 12px;
+  --domino-border-thickness: 2.25px;
   --popup-board-cell-size: clamp(42px, 12vw, 58px);
   color: var(--dark-black);
   -webkit-font-smoothing: antialiased;
@@ -213,7 +213,7 @@ button:disabled {
   border-radius: var(--domino-border-radius);
   background: var(--bg-pips-domino);
   pointer-events: none;
-  box-shadow: none;
+  box-shadow: rgb(173, 173, 173) 0px -2.2704px 0px 0px inset;
   color: var(--dark-black);
   font-family: nyt-franklin, Arial, system-ui, sans-serif;
   font-size: 20px;
