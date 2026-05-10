@@ -226,16 +226,7 @@ function renderBoard(board, solution, options = {}) {
   boardEl.style.gridTemplateColumns = `repeat(${dimensions.columns}, var(--popup-board-cell-size))`;
   boardEl.style.gridTemplateRows = `repeat(${dimensions.rows}, var(--popup-board-cell-size))`;
 
-  if (!(solution?.placements?.length)) {
-    for (const node of nodes) {
-      const div = document.createElement("div");
-      div.className = "cell";
-      div.style.gridColumn = `${node.column + 1}`;
-      div.style.gridRow = `${node.row + 1}`;
-
-      boardEl.appendChild(div);
-    }
-  }
+  renderBoardBackgroundCells(nodesByIndex, dimensions);
 
   for (const [index, placement] of (solution?.placements ?? []).entries()) {
     const domino = renderDominoPlacement(placement, nodesById);
@@ -249,6 +240,54 @@ function renderBoard(board, solution, options = {}) {
   if (options.animatePlacements && solution?.placements?.length) {
     boardEl.appendChild(renderBoardLogoSweep(solution.placements.length));
   }
+}
+
+function renderBoardBackgroundCells(nodesByIndex, dimensions) {
+  for (let row = 0; row < dimensions.rows; row += 1) {
+    for (let column = 0; column < dimensions.columns; column += 1) {
+      const index = row * dimensions.columns + column;
+      const div = document.createElement("div");
+      div.className = nodesByIndex.has(index)
+        ? ["cell", ...exposedBoardCornerClasses(nodesByIndex, dimensions, row, column)].join(" ")
+        : ["cell", "hidden", ...concaveBoardCornerClasses(nodesByIndex, dimensions, row, column)].join(" ");
+      div.style.gridColumn = `${column + 1}`;
+      div.style.gridRow = `${row + 1}`;
+
+      boardEl.appendChild(div);
+    }
+  }
+}
+
+function exposedBoardCornerClasses(nodesByIndex, dimensions, row, column) {
+  const hasCell = (cellRow, cellColumn) => {
+    if (cellRow < 0 || cellColumn < 0 || cellRow >= dimensions.rows || cellColumn >= dimensions.columns) {
+      return false;
+    }
+    return nodesByIndex.has(cellRow * dimensions.columns + cellColumn);
+  };
+
+  return [
+    !hasCell(row - 1, column - 1) && !hasCell(row - 1, column) && !hasCell(row, column - 1) ? "corner-tl" : "",
+    !hasCell(row - 1, column) && !hasCell(row - 1, column + 1) && !hasCell(row, column + 1) ? "corner-tr" : "",
+    !hasCell(row, column - 1) && !hasCell(row + 1, column - 1) && !hasCell(row + 1, column) ? "corner-bl" : "",
+    !hasCell(row, column + 1) && !hasCell(row + 1, column) && !hasCell(row + 1, column + 1) ? "corner-br" : ""
+  ].filter(Boolean);
+}
+
+function concaveBoardCornerClasses(nodesByIndex, dimensions, row, column) {
+  const hasCell = (cellRow, cellColumn) => {
+    if (cellRow < 0 || cellColumn < 0 || cellRow >= dimensions.rows || cellColumn >= dimensions.columns) {
+      return false;
+    }
+    return nodesByIndex.has(cellRow * dimensions.columns + cellColumn);
+  };
+
+  return [
+    hasCell(row - 1, column) && hasCell(row, column - 1) ? "concave-tl" : "",
+    hasCell(row - 1, column) && hasCell(row, column + 1) ? "concave-tr" : "",
+    hasCell(row + 1, column) && hasCell(row, column - 1) ? "concave-bl" : "",
+    hasCell(row + 1, column) && hasCell(row, column + 1) ? "concave-br" : ""
+  ].filter(Boolean);
 }
 
 function renderBoardLogoSweep(placementCount) {
