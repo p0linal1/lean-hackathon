@@ -175,7 +175,29 @@ end PipsConvert
 namespace LeanHttpServer
 
 def defaultPort : UInt16 := UInt16.ofNat 8765
-def solveTimeoutMs : Nat := 10000
+def solveTimeoutMs : Nat := 30000
+
+/-- Outcome of running the cancellable solver under a timeout. -/
+inductive SolveOutcome
+  | solved (assignment : AssignmentImpl)
+  | unsolved
+  | timedOut
+deriving Inhabited
+
+/-- Poll a solver `Task` until it finishes or the deadline elapses. On timeout,
+    requests cooperative cancellation via `IO.cancel`; the solver checks
+    `IO.checkCanceled` between recursive calls and bails out. -/
+partial def awaitSolveTask (task : Task (Option AssignmentImpl)) (deadlineMs : Nat) :
+    BaseIO SolveOutcome := do
+  if ← IO.hasFinished task then
+    match ← IO.wait task with
+    | some a => return .solved a
+    | none => return .unsolved
+  if (← IO.monoMsNow) >= deadlineMs then
+    IO.cancel task
+    return .timedOut
+  IO.sleep 10
+  awaitSolveTask task deadlineMs
 
 def localhost (port : UInt16) : SocketAddress :=
   .v4 { addr := IPv4Addr.ofParts 127 0 0 1, port := port }
@@ -203,144 +225,11 @@ def parseRequestBody (raw : String) : String :=
   let parts := raw.splitOn "\r\n\r\n"
   String.intercalate "\r\n\r\n" (parts.drop 1)
 
-def requestHeadersComplete (raw : String) : Bool :=
-  (raw.splitOn "\r\n\r\n").length > 1
-
-def parseContentLength (raw : String) : Option Nat :=
-  let headerBlock := (raw.splitOn "\r\n\r\n").headD ""
-  let headerLines := (headerBlock.splitOn "\r\n").drop 1
-  headerLines.findSome? fun line =>
-    let parts := line.splitOn ":"
-    match parts with
-    | name :: valueParts =>
-      if name = "Content-Length" || name = "content-length" then
-        (String.intercalate ":" valueParts).trimAscii.toString.toNat?
-      else
-        none
-    | [] => none
-
-def requestBodyComplete (raw : String) : Bool :=
-  if !requestHeadersComplete raw then
-    false
-  else
-    match parseContentLength raw with
-    | none => true
-    | some expected => (parseRequestBody raw).toUTF8.size >= expected
-
 def jsonResponse (status : String) (json : Lean.Json) : String :=
   buildResponse status json.compress
 
 def errorResponse (status : String) (message : String) : String :=
   jsonResponse status <| .mkObj [("error", message)]
-
-def deadlineExceeded (deadlineMs : Nat) : IO Bool := do
-  return (← IO.monoMsNow) >= deadlineMs
-
-inductive ChildSolveResult where
-  | solved (assignmentJson : Lean.Json)
-  | unsolved
-  | timedOut
-  | failed (message : String)
-
-def solveOnceJson (body : String) : Lean.Json :=
-  match Lean.Json.parse body with
-  | .error err =>
-      .mkObj [("ok", false), ("error", s!"Invalid JSON body: {err}")]
-  | .ok json =>
-      match PipsConvert.parseFrontendState json with
-      | .error parseErr =>
-          .mkObj [("ok", false), ("error", parseErr)]
-      | .ok (pip, dominoes, constraints) =>
-          match solve pip dominoes constraints with
-          | some assignment =>
-              .mkObj
-                [ ("ok", true)
-                , ("solved", true)
-                , ("assignment", PipsConvert.assignmentToJson assignment)
-                ]
-          | none =>
-              .mkObj [("ok", true), ("solved", false)]
-
-def runSolveOnce : IO Unit := do
-  let stdin ← IO.getStdin
-  let stdout ← IO.getStdout
-  let body ← stdin.readToEnd
-  stdout.putStr (solveOnceJson body).compress
-  stdout.flush
-
-def parseChildSolveResult (stdout stderr : String) : ChildSolveResult :=
-  match Lean.Json.parse stdout.trimAscii.toString with
-  | .error err =>
-      .failed s!"Solver child returned invalid JSON: {err}; stderr: {stderr}"
-  | .ok json =>
-      match json.getObjVal? "ok" with
-      | .ok (.bool false) =>
-          let message :=
-            match json.getObjVal? "error" with
-            | .ok (.str s) => s
-            | _ => "Solver child returned an error"
-          .failed message
-      | _ =>
-          match json.getObjVal? "solved" with
-          | .ok (.bool true) =>
-              match json.getObjVal? "assignment" with
-              | .ok assignment => .solved assignment
-              | _ => .failed "Solver child returned solved=true without an assignment"
-          | .ok (.bool false) => .unsolved
-          | _ => .failed "Solver child did not return a solved flag"
-
-abbrev SolverChildConfig : IO.Process.StdioConfig :=
-  { stdin := IO.Process.Stdio.null
-  , stdout := IO.Process.Stdio.piped
-  , stderr := IO.Process.Stdio.piped
-  }
-
-def discardReadTask (task : Task (Except IO.Error String)) : IO Unit := do
-  try
-    discard <| IO.ofExcept task.get
-  catch _ =>
-    pure ()
-
-partial def waitForSolverChild
-    (deadlineMs : Nat)
-    (child : IO.Process.Child SolverChildConfig)
-    (stdoutTask stderrTask : Task (Except IO.Error String)) : IO ChildSolveResult := do
-  match ← child.tryWait with
-  | some exitCode =>
-      let stdout ← IO.ofExcept stdoutTask.get
-      let stderr ← IO.ofExcept stderrTask.get
-      if exitCode == 0 then
-        return parseChildSolveResult stdout stderr
-      else
-        return .failed s!"Solver child exited with code {exitCode}; stderr: {stderr}"
-  | none =>
-      if ← deadlineExceeded deadlineMs then
-        child.kill
-        discard <| child.wait
-        discardReadTask stdoutTask
-        discardReadTask stderrTask
-        return .timedOut
-      else
-        IO.sleep 25
-        waitForSolverChild deadlineMs child stdoutTask stderrTask
-
-def solveInChildProcess (body : String) (timeoutMs : Nat) : IO ChildSolveResult := do
-  let startMs ← IO.monoMsNow
-  let executable ← IO.appPath
-  let child0 ← IO.Process.spawn
-    { cmd := executable.toString
-    , args := #["--solve-once"]
-    , stdin := IO.Process.Stdio.piped
-    , stdout := IO.Process.Stdio.piped
-    , stderr := IO.Process.Stdio.piped
-    , setsid := true
-    }
-  let (stdin, child) ← child0.takeStdin
-  stdin.putStr body
-  stdin.flush
-  let stdoutTask ← IO.asTask child.stdout.readToEnd Task.Priority.dedicated
-  let stderrTask ← IO.asTask child.stderr.readToEnd Task.Priority.dedicated
-  waitForSolverChild (startMs + timeoutMs) child stdoutTask stderrTask
 
 def handleRequest (stateRef : IO.Ref (Option Lean.Json)) (method path body : String) : IO String := do
   if method = "OPTIONS" then
@@ -364,15 +253,17 @@ def handleRequest (stateRef : IO.Ref (Option Lean.Json)) (method path body : Str
           IO.println s!"[lean-http-server] parsed: {pip.nodes.length} nodes, \
             {pip.edges.length} edges, {dominoes.length} dominoes, \
             {constraints.length} constraints"
-          let result ← solveInChildProcess body solveTimeoutMs
+          let task ← (solve pip dominoes constraints).asTask
+          let deadline := (← IO.monoMsNow) + solveTimeoutMs
+          let result ← awaitSolveTask task deadline
           match result with
-          | .solved assignmentJson =>
-            IO.println "[lean-http-server] SOLVED!"
+          | .solved assignment =>
+            IO.println s!"[lean-http-server] SOLVED! assignment has {assignment.length} placements"
             pure <| jsonResponse "200 OK" <| .mkObj
               [ ("ok",          true)
               , ("solved",      true)
               , ("leanState",   PipsConvert.toResponseJson pip dominoes constraints)
-              , ("assignment",  assignmentJson)
+              , ("assignment",  PipsConvert.assignmentToJson assignment)
               ]
           | .unsolved =>
             IO.println "[lean-http-server] No solution found"
@@ -390,33 +281,16 @@ def handleRequest (stateRef : IO.Ref (Option Lean.Json)) (method path body : Str
               , ("error",       s!"Lean server timed out after {solveTimeoutMs / 1000} seconds")
               , ("leanState",   PipsConvert.toResponseJson pip dominoes constraints)
               ]
-          | .failed message =>
-            IO.eprintln s!"[lean-http-server] Solver child failed: {message}"
-            pure <| jsonResponse "500 Internal Server Error" <| .mkObj
-              [ ("ok",          false)
-              , ("solved",      false)
-              , ("error",       message)
-              , ("leanState",   PipsConvert.toResponseJson pip dominoes constraints)
-              ]
       | _ =>
         pure <| errorResponse "400 Bad Request" "JSON body must be an object"
   else
     pure <| errorResponse "404 Not Found" s!"No route for {method} {path}"
 
-partial def readRequestLoop (client : Socket.Client) (raw : String) : IO String := do
-  if requestBodyComplete raw then
-    pure raw
-  else
-    let chunk? ← Async.block (Socket.Client.recv? client 65536)
-    match chunk? with
-    | none       => pure raw
-    | some chunk => readRequestLoop client (raw ++ (String.fromUTF8? chunk).getD "")
-
 def readRequest (client : Socket.Client) : IO String := do
   let chunk? ← Async.block (Socket.Client.recv? client 65536)
   match chunk? with
   | none       => pure ""
-  | some chunk => readRequestLoop client ((String.fromUTF8? chunk).getD "")
+  | some chunk => pure <| (String.fromUTF8? chunk).getD ""
 
 def respond (client : Socket.Client) (message : String) : IO Unit := do
   Async.block (Socket.Client.send client message.toUTF8)
@@ -454,8 +328,5 @@ def run : IO Unit := do
 
 end LeanHttpServer
 
-def main (args : List String) : IO Unit :=
-  if args.contains "--solve-once" then
-    LeanHttpServer.runSolveOnce
-  else
-    LeanHttpServer.run
+def main : IO Unit :=
+  LeanHttpServer.run

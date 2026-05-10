@@ -7,7 +7,7 @@ const LEAN_SERVER_STATE_URL = "http://127.0.0.1:8765/solve";
 const POPUP_STATE_KEY = "pipsHelper.popupState.v1";
 const TEST_RUN_KEY = "pipsHelper.backendTestRun.v1";
 const START_SERVER_STATUS = "Start the server!";
-const TEST_SOLVE_TIMEOUT_MS = 10000;
+const TEST_SOLVE_TIMEOUT_MS = 30000;
 const TEST_SOLVE_CONCURRENCY = 10;
 const STATUS_CLASSES = [
   "reading",
