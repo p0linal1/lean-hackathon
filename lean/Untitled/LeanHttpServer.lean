@@ -253,7 +253,7 @@ def handleRequest (stateRef : IO.Ref (Option Lean.Json)) (method path body : Str
           IO.println s!"[lean-http-server] parsed: {pip.nodes.length} nodes, \
             {pip.edges.length} edges, {dominoes.length} dominoes, \
             {constraints.length} constraints"
-          let task ← (solve pip dominoes constraints).asTask
+          let task ← BaseIO.asTask (solve pip dominoes constraints)
           let deadline := (← IO.monoMsNow) + solveTimeoutMs
           let result ← awaitSolveTask task deadline
           match result with
