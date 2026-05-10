@@ -7,6 +7,7 @@ let refreshIntervalId = null;
 const LEAN_SERVER_STATE_URL = "http://127.0.0.1:8765/solve";
 const POPUP_STATE_KEY = "pipsHelper.popupState.v1";
 const TEST_RUN_KEY = "pipsHelper.backendTestRun.v1";
+const PIPS_PAGE_PATTERN = /^https:\/\/www\.nytimes\.com\/(?:games|puzzles)\/pips(?:[/?#]|$)/;
 const START_SERVER_STATUS = "Start the server!";
 const TEST_SOLVE_TIMEOUT_MS = 60000;
 const TEST_SOLVE_CONCURRENCY = 2;
@@ -39,12 +40,13 @@ initializePopup();
 
 async function initializePopup() {
   const restored = restorePopupState();
-  await readPuzzle({ preserveOnError: restored });
+  await readPuzzle({ clearBeforeRead: restored });
   startStateRefreshWatcher();
 }
 
 async function readPuzzle(options = {}) {
   setStatus("Reading");
+  if (options.clearBeforeRead) clearRenderedPuzzleState();
 
   try {
     const response = await readStateFromCurrentTab();
@@ -52,9 +54,16 @@ async function readPuzzle(options = {}) {
     applyDetectedStateIfChanged(response.state);
     setStatus(currentSolution ? "Solved" : "Detected");
   } catch (error) {
-    if (!options.preserveOnError) setStatus("Error");
+    setStatus("Error");
     console.warn("[Pippertons]", error);
   }
+}
+
+function clearRenderedPuzzleState() {
+  currentStateSnapshot = "";
+  boardEl.innerHTML = "";
+  dominoTrayEl.innerHTML = "";
+  boardSection.classList.add("hidden");
 }
 
 function applyDetectedState(state) {
@@ -70,46 +79,19 @@ function stateSnapshot(state) {
   return JSON.stringify(state ?? null);
 }
 
-function puzzleSnapshot(state) {
-  if (!state) return "";
-  return JSON.stringify({
-    board: state.board ?? null,
-    dominoes: canonicalDominoes(state.dominoes),
-    fixedPlacements: canonicalPlacements(state.fixedPlacements),
-    constraints: state.constraints ?? []
-  });
-}
-
-function canonicalDominoes(dominoes) {
-  return (dominoes ?? [])
-    .map((domino) => [domino.top ?? 0, domino.bottom ?? 0].sort((a, b) => a - b))
-    .sort(([leftTop, leftBottom], [rightTop, rightBottom]) =>
-      leftTop - rightTop || leftBottom - rightBottom
-    );
-}
-
-function canonicalPlacements(placements) {
-  return (placements ?? [])
-    .map((placement) => ({
-      domino: [placement.domino?.top ?? 0, placement.domino?.bottom ?? 0].sort((a, b) => a - b),
-      nodes: [placement.topNode, placement.bottomNode].sort()
-    }))
-    .sort((left, right) =>
-      String(left.nodes[0]).localeCompare(String(right.nodes[0])) ||
-      String(left.nodes[1]).localeCompare(String(right.nodes[1])) ||
-      left.domino[0] - right.domino[0] ||
-      left.domino[1] - right.domino[1]
-    );
+function boardSnapshot(state) {
+  return JSON.stringify(state?.board ?? null);
 }
 
 function applyDetectedStateIfChanged(state) {
   const snapshot = stateSnapshot(state);
   if (snapshot === currentStateSnapshot) return false;
 
-  if (currentSolution && puzzleSnapshot(state) === puzzleSnapshot(currentState)) {
+  if (currentSolution && boardSnapshot(state) === boardSnapshot(currentState)) {
     currentStateSnapshot = snapshot;
     currentState = state;
     solveButton.disabled = !currentState?.board?.nodes?.length;
+    renderState(currentState, currentSolution);
     savePopupState({ currentState, solution: currentSolution, status: "Solved" });
     return false;
   }
@@ -436,13 +418,31 @@ async function sendMessageToCurrentTab(message) {
   }
 
   currentTabId = tab.id;
-  const response = await chrome.tabs.sendMessage(tab.id, message);
+  let response;
+  try {
+    response = await chrome.tabs.sendMessage(tab.id, message);
+  } catch (error) {
+    if (!isMissingContentScriptError(error) || !PIPS_PAGE_PATTERN.test(tab.url ?? "")) {
+      throw error;
+    }
+
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ["content.js"]
+    });
+    response = await chrome.tabs.sendMessage(tab.id, message);
+  }
 
   if (!response?.ok) {
     throw new Error(response?.error || "The NYT tab did not accept the request");
   }
 
   return response;
+}
+
+function isMissingContentScriptError(error) {
+  const message = String(error?.message ?? error);
+  return message.includes("Could not establish connection") || message.includes("Receiving end does not exist");
 }
 
 function handleRuntimeMessage(message, sender) {
