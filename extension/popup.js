@@ -49,7 +49,7 @@ async function readPuzzle(options = {}) {
     setStatus("Detected");
   } catch (error) {
     if (!options.preserveOnError) setStatus("Error");
-    console.warn("[Pips Helper]", error);
+    console.warn("[Pippertons]", error);
   }
 }
 
@@ -90,7 +90,7 @@ async function solvePuzzle() {
     setStatus("Solved");
   } catch (error) {
     setStatus(isConnectionRefused(error) ? START_SERVER_STATUS : "Error", "error");
-    console.warn("[Pips Helper]", error);
+    console.warn("[Pippertons]", error);
   }
 }
 
