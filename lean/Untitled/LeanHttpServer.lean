@@ -175,7 +175,7 @@ end PipsConvert
 namespace LeanHttpServer
 
 def defaultPort : UInt16 := UInt16.ofNat 8765
-def solveTimeoutMs : Nat := 30000
+def solveTimeoutMs : Nat := 5000
 
 /-- Outcome of running the cancellable solver under a timeout. -/
 inductive SolveOutcome

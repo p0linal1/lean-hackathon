@@ -65,9 +65,12 @@ def DominoBag.ofList (dominoes : List Domino) : DominoBag :=
   dominoes.eraseDups.map fun d => (d, dominoes.countP (· == d))
 
 /-- Core backtracking solver. Tries to place remaining dominoes on uncovered edges.
+    `remaining` is a multiset, so identical dominoes don't generate duplicate orderings.
     `edges` is maintained incrementally: it contains exactly the edges whose endpoints
     are both unused in `assignment`, so we never recompute it from scratch.
-    `remaining` is a multiset, so identical dominoes don't generate duplicate orderings.
+    Each level runs a parity prune via connected-component decomposition (any odd
+    component is unsolvable), but does *not* restrict iteration to one component —
+    that adds branching factor without payoff on typical (single-component) puzzles.
     `BaseIO`-valued so the search can be cooperatively cancelled — each call checks
     `IO.checkCanceled` and returns `none` immediately if the host task was cancelled. -/
 def solveAux
@@ -109,10 +112,49 @@ decreasing_by
     | (simp only [DominoBag.size, List.length_cons]; omega)
     | (split <;> simp only [DominoBag.size, List.length_cons] <;> omega)
 
-/-- Solve a pip puzzle: find a valid assignment of dominoes to edges satisfying all constraints. -/
+/-- Race a list of solver tasks: return the first `some` result and cancel the rest.
+    If all tasks return `none`, returns `none`. -/
+partial def raceTasks : List (Task (Option AssignmentImpl)) → BaseIO (Option AssignmentImpl)
+  | [] => pure none
+  | t :: ts => do
+    let (result, remaining) ← IO.waitAny' (t :: ts)
+    match result with
+    | some a =>
+      remaining.forM IO.cancel
+      return some a
+    | none =>
+      raceTasks remaining
+
+/-- Solve a pip puzzle: find a valid assignment of dominoes to edges satisfying all constraints.
+    Parallelism: each first-domino placement (edge × orientation) is spawned as its own
+    `Task`; the first to return `some` wins and cancels the rest. -/
 def solve (pip : Pip) (dominoes : List Domino) (cs : List Constraint) :
-    BaseIO (Option AssignmentImpl) :=
-  solveAux pip cs (DominoBag.ofList dominoes) [] pip.edges ∅
+    BaseIO (Option AssignmentImpl) := do
+  let bag := DominoBag.ofList dominoes
+  match bag with
+  | [] =>
+    -- No dominoes to place; just verify the (empty) assignment.
+    solveAux pip cs [] [] pip.edges ∅
+  | (_, 0) :: rest =>
+    -- Unreachable via `ofList`; defer to sequential solver.
+    solveAux pip cs rest [] pip.edges ∅
+  | (domino, n + 1) :: rest =>
+    let restBag : DominoBag := if n = 0 then rest else (domino, n) :: rest
+    let placements : List (Domino × Node × Node) :=
+      pip.edges.flatMap fun (e₁, e₂) => tryPlace domino e₁ e₂
+    match placements with
+    | [] => return none
+    | [_] =>
+      -- Single choice; no parallelism benefit.
+      solveAux pip cs bag [] pip.edges ∅
+    | _ =>
+      let tasks ← placements.mapM fun (d, pn₁, pn₂) => do
+        let edges' := pip.edges.filter fun (a, b) =>
+          a != pn₁ && a != pn₂ && b != pn₁ && b != pn₂
+        let nodeValues : HashMap Node Nat :=
+          ((∅ : HashMap Node Nat).insert pn₁ d.left).insert pn₂ d.right
+        BaseIO.asTask (solveAux pip cs restBag [(d, pn₁, pn₂)] edges' nodeValues)
+      raceTasks tasks
 
 -- ============================================================================
 -- SOLVER CORRECTNESS
