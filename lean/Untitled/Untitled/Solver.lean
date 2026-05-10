@@ -64,9 +64,11 @@ def solveAux
       else
         none
     | domino :: rest =>
-      let edges := uncoveredEdges pip assignment
-      if edges.length != remaining.length then none
-      else edges.findSome? (λ (n₁, n₂) =>
+      let uncoveredNodeCount := pip.nodes.countP (λ n => !isNodeUsed assignment n)
+      if uncoveredNodeCount != 2 * remaining.length then none
+      else
+        let edges := uncoveredEdges pip assignment
+        edges.findSome? (λ (n₁, n₂) =>
         let placements := tryPlace domino n₁ n₂
         placements.findSome? (λ placement =>
           solveAux pip cs rest (placement :: assignment)))
