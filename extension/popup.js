@@ -1,4 +1,5 @@
 let currentState = null;
+let lastBoardDimensions = null;
 let currentTabId = null;
 let currentStateSnapshot = "";
 let refreshIntervalId = null;
@@ -165,7 +166,9 @@ function renderState(state, solution = null) {
   const board = state.board;
 
   renderBoard(board, solution);
-  boardSection.classList.toggle("hidden", !Array.isArray(board?.nodes));
+  const hasBoard = Array.isArray(board?.nodes);
+  boardSection.classList.toggle("hidden", !hasBoard);
+  if (hasBoard) requestAnimationFrame(scaleBoardToFit);
 }
 
 function renderBoard(board, solution) {
@@ -181,6 +184,7 @@ function renderBoard(board, solution) {
   const nodesById = new Map(nodes.map((node) => [node.id, node]));
   const dimensions = boardDimensions(board, nodesByIndex);
 
+  lastBoardDimensions = dimensions;
   boardEl.style.gridTemplateColumns = `repeat(${dimensions.columns}, var(--popup-board-cell-size))`;
   boardEl.style.gridTemplateRows = `repeat(${dimensions.rows}, var(--popup-board-cell-size))`;
 
@@ -199,6 +203,27 @@ function renderBoard(board, solution) {
     const domino = renderDominoPlacement(placement, nodesById);
     if (domino) boardEl.appendChild(domino);
   }
+}
+
+function scaleBoardToFit() {
+  if (!lastBoardDimensions) return;
+  const { rows, columns } = lastBoardDimensions;
+
+  const labelEl = boardSection.querySelector('.panel-label');
+  const panelPadding = 12;
+  // Board sizing: 2px border each side + 4px padding each side + (N-1)*4px gaps
+  // Total = 2*2 + 2*4 + (N-1)*4 + N*cellSize = 12 + (N-1)*4 + N*cellSize
+  const boardOverhead = (n) => 12 + (n - 1) * 4;
+
+  const innerWidth = boardSection.clientWidth - panelPadding * 2;
+  const labelH = labelEl ? labelEl.offsetHeight + 8 : 0;
+  const innerHeight = boardSection.clientHeight - panelPadding * 2 - labelH;
+
+  const cellFromWidth = (innerWidth - boardOverhead(columns)) / columns;
+  const cellFromHeight = (innerHeight - boardOverhead(rows)) / rows;
+  const cellSize = Math.max(16, Math.min(58, Math.floor(Math.min(cellFromWidth, cellFromHeight))));
+
+  boardEl.style.setProperty('--popup-board-cell-size', `${cellSize}px`);
 }
 
 function renderDominoPlacement(placement, nodesById) {
