@@ -1,3 +1,5 @@
+import Mathlib.Data.List.Nodup
+
 /-!
 # Pip Puzzle Formalization
 
@@ -108,6 +110,7 @@ deriving Repr, DecidableEq, BEq, Hashable
 inductive ConstraintSpec where
   | sum   (ns : List Node) (target : Nat) (ty : SumConstraintType)
   | equiv (ns : List Node)
+  | not_equiv (ns : List Node)
 
 def SatisfiesConstraint (a : AssignmentSpec) : ConstraintSpec → Prop
   | .sum ns target .eq  => (∀ n ∈ ns, (nodeValue a n).isSome) ∧
@@ -118,6 +121,8 @@ def SatisfiesConstraint (a : AssignmentSpec) : ConstraintSpec → Prop
                             (ns.filterMap (nodeValue a)).sum > target
   | .equiv ns           => (∀ n ∈ ns, (nodeValue a n).isSome) ∧
                             ∃ v, ∀ n ∈ ns, nodeValue a n = some v
+  | .not_equiv ns           => (∀ n ∈ ns, (nodeValue a n).isSome) ∧
+                            ∀ n1 ∈ ns, ∀ n2 ∈ ns, n1 ≠ n2 → nodeValue a n1 ≠ nodeValue a n2
 
 def SatisfiesAllConstraints (a : AssignmentSpec) (cs : List ConstraintSpec) : Prop :=
   ∀ c ∈ cs, SatisfiesConstraint a c
@@ -174,6 +179,7 @@ def assignmentIsValid (pip : Pip) (a : AssignmentImpl) : Bool :=
 inductive Constraint where
   | sum   (ns : List Node) (c : Nat) (t : SumConstraintType)
   | equiv (ns : List Node)
+  | not_equiv (ns : List Node)
 deriving Repr, BEq, Hashable
 
 def nodeValueImpl (a : AssignmentImpl) (n : Node) : Option Nat :=
@@ -200,6 +206,10 @@ def checkConstraint (a : AssignmentImpl) : Constraint → Bool
     match vals with
     | [] => true
     | v :: rest => rest.all (· == v)
+  | .not_equiv ns       =>
+    let vals := ns.filterMap (nodeValueImpl a)
+    vals.length == ns.length &&
+    vals.Nodup
 
 def checkAllConstraints (a : AssignmentImpl) (cs : List Constraint) : Bool :=
   cs.all (checkConstraint a)
@@ -263,11 +273,9 @@ theorem coversAllNodesImpl_correct (pip : Pip) (a : AssignmentImpl)
   constructor
   · intro hcovers n hmem
     obtain ⟨d, n₁, n₂, hin, hor⟩ := hcovers n hmem
-    exact ⟨{ domino := d, fst := n₁, snd := n₂ }, ⟨d, n₁, n₂, hin, rfl⟩,
-           hor.imp Eq.symm Eq.symm⟩
+    exact ⟨d, n₁, n₂, hin, hor.imp Eq.symm Eq.symm⟩
   · intro h n hmem
-    obtain ⟨p, ⟨d, n₁, n₂, hin, heq⟩, hor⟩ := h n hmem
-    subst heq; simp at hor
+    obtain ⟨d, n₁, n₂, hin, hor⟩ := h n hmem
     exact ⟨d, n₁, n₂, hin, hor.imp Eq.symm Eq.symm⟩
 
 -- Main bridge theorem
@@ -291,6 +299,7 @@ theorem assignmentIsValid_correct (pip : Pip) (a : AssignmentImpl) :
 def toConstraintSpec : Constraint → ConstraintSpec
   | .sum ns target ty => .sum ns target ty
   | .equiv ns => .equiv ns
+  | .not_equiv ns => .not_equiv ns
 
 /-- Convert a list of implementation constraints to spec constraints. -/
 def toConstraintSpecs (cs : List Constraint) : List ConstraintSpec :=
@@ -409,6 +418,13 @@ private theorem filterMap_all_eq_iff
         rw [← hfnv, ← hfnx]
         simp [BEq.beq]
 
+private theorem filterMap_nodup_iff
+    (f : Node → Option Nat) (l : List Node)
+    (hSome : ∀ n ∈ l, (f n).isSome = true) :
+    (l.filterMap f).Nodup ↔
+    ∀ n1 ∈ l, ∀ n2 ∈ l, n1 ≠ n2 → f n1 ≠ f n2 := by
+  sorry
+
 /-- checkConstraint decides SatisfiesConstraint. -/
 theorem checkConstraint_correct (a : AssignmentImpl) (c : Constraint) :
     checkConstraint a c = true ↔
@@ -422,6 +438,12 @@ theorem checkConstraint_correct (a : AssignmentImpl) (c : Constraint) :
           filterMap_nodeValue_correct, Bool.and_eq_true]
     intro hSome
     exact filterMap_all_eq_iff (nodeValue (toAssignmentSpec a)) ns hSome
+  | not_equiv ns =>
+    simp [checkConstraint, SatisfiesConstraint, toConstraintSpec,
+          filterMap_nodeValue_correct, Bool.and_eq_true, List.Nodup]
+    intro hSome
+    exact filterMap_nodup_iff (nodeValue (toAssignmentSpec a)) ns hSome
+
 
 /-- checkAllConstraints decides SatisfiesAllConstraints. -/
 theorem checkAllConstraints_correct (a : AssignmentImpl) (cs : List Constraint) :
