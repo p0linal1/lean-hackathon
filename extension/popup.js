@@ -144,11 +144,19 @@ async function solveWithBackend(state, options = {}) {
     if (timeoutId) clearTimeout(timeoutId);
   }
 
-  if (!response.ok) {
-    throw new Error(`Lean server returned HTTP ${response.status}`);
+  const responseText = await response.text();
+  let payload = null;
+  try {
+    payload = responseText ? JSON.parse(responseText) : null;
+  } catch {
+    payload = null;
   }
 
-  const payload = await response.json();
+  if (!response.ok) {
+    const detail = payload?.error || responseText;
+    throw new Error(`Lean server returned HTTP ${response.status}${detail ? `: ${detail}` : ""}`);
+  }
+
   if (payload?.ok === false) {
     throw new Error(payload.error || "Lean server returned an error response");
   }
