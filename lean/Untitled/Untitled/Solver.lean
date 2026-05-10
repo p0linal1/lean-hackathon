@@ -55,6 +55,9 @@ def emptyNeighborCount (pip : Pip) (assignment : AssignmentImpl) (n : Node) : Na
 def unusedNodes (pip : Pip) (assignment : AssignmentImpl) : List Node :=
   pip.nodes.filter (λ n => !isNodeUsed assignment n)
 
+def hasDeadEnd (pip : Pip) (assignment : AssignmentImpl) : Bool :=
+  (unusedNodes pip assignment).any (λ n => emptyNeighborCount pip assignment n == 0)
+
 def orderedUnusedNodes (pip : Pip) (assignment : AssignmentImpl) : List Node :=
   (unusedNodes pip assignment).mergeSort
     (λ a b => emptyNeighborCount pip assignment a <= emptyNeighborCount pip assignment b)
@@ -105,7 +108,11 @@ def solveAuxFuel
             (dominoChoices remaining).findSome? (λ (domino, rest) =>
               let placements := tryPlace domino n₁ n₂
               placements.findSome? (λ placement =>
-                solveAuxFuel fuel' pip cs rest (placement :: assignment))))
+                let nextAssignment := placement :: assignment
+                if hasDeadEnd pip nextAssignment then
+                  none
+                else
+                  solveAuxFuel fuel' pip cs rest nextAssignment)))
 
 def solveAux
     (pip : Pip)
@@ -168,7 +175,8 @@ theorem solveAuxFuel_sound (fuel : Nat) (pip : Pip) (cs : List Constraint)
         have ⟨_, choice, _, _, hfindPlacements, _⟩ := List.findSome?_eq_some_iff.mp hfindDominoes
         obtain ⟨_, withoutChosen⟩ := choice
         have ⟨_, placement, _, _, hsolve, _⟩ := List.findSome?_eq_some_iff.mp hfindPlacements
-        exact ih withoutChosen (placement :: assignment) hsolve
+        simp at hsolve
+        exact ih withoutChosen (placement :: assignment) hsolve.2
 
 /-- solveAux only returns assignments that pass both checks. -/
 theorem solveAux_sound (pip : Pip) (cs : List Constraint)
