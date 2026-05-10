@@ -6,6 +6,7 @@ let refreshIntervalId = null;
 const LEAN_SERVER_STATE_URL = "http://127.0.0.1:8765/solve";
 const POPUP_STATE_KEY = "pipsHelper.popupState.v1";
 const TEST_RUN_KEY = "pipsHelper.backendTestRun.v1";
+const START_SERVER_STATUS = "Start the server!";
 const TEST_SOLVE_TIMEOUT_MS = 10000;
 const TEST_SOLVE_CONCURRENCY = 10;
 const STATUS_CLASSES = [
@@ -88,7 +89,7 @@ async function solvePuzzle() {
     });
     setStatus("Solved");
   } catch (error) {
-    setStatus("Error");
+    setStatus(isConnectionRefused(error) ? START_SERVER_STATUS : "Error", "error");
     console.warn("[Pips Helper]", error);
   }
 }
@@ -116,7 +117,7 @@ async function solveWithBackend(state, options = {}) {
     if (error?.name === "AbortError") {
       throw new Error(`Lean server timed out after ${timeoutMs / 1000} seconds`);
     }
-    throw error;
+    throw new Error(START_SERVER_STATUS);
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }
@@ -315,10 +316,15 @@ function dominoOrientation(firstNodeId, secondNodeId) {
   return Math.abs(first - second) === 1 ? "horizontal" : "vertical";
 }
 
-function setStatus(status) {
+function setStatus(status, statusClass = status.toLowerCase()) {
   statusEl.textContent = status;
   STATUS_CLASSES.forEach(cls => statusEl.classList.remove(cls));
-  statusEl.classList.add(status.toLowerCase());
+  statusEl.classList.add(statusClass);
+}
+
+function isConnectionRefused(error) {
+  const message = String(error?.message ?? error);
+  return message === START_SERVER_STATUS || message.includes("ERR_CONNECTION_REFUSED");
 }
 
 async function readStateFromCurrentTab() {
