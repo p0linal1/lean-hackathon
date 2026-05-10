@@ -1,4 +1,5 @@
 let currentState = null;
+let currentTabId = null;
 const LEAN_SERVER_STATE_URL = "http://127.0.0.1:8765/solve";
 const POPUP_STATE_KEY = "pipsHelper.popupState.v1";
 const TEST_RUN_KEY = "pipsHelper.backendTestRun.v1";
@@ -25,6 +26,7 @@ const testResultsEl = document.querySelector("#test-results");
 
 solveButton.addEventListener("click", solvePuzzle);
 testButton.addEventListener("click", runPuzzleTests);
+chrome.runtime.onMessage.addListener(handleRuntimeMessage);
 initializePopup();
 
 async function initializePopup() {
@@ -38,16 +40,19 @@ async function readPuzzle(options = {}) {
   try {
     const response = await readStateFromCurrentTab();
 
-    currentState = response.state;
-    solveButton.disabled = !currentState?.board?.nodes?.length;
-
-    renderState(currentState);
-    savePopupState({ currentState, solution: null, status: "Detected" });
+    applyDetectedState(response.state);
     setStatus("Detected");
   } catch (error) {
     if (!options.preserveOnError) setStatus("Error");
     console.warn("[Pips Helper]", error);
   }
+}
+
+function applyDetectedState(state) {
+  currentState = state;
+  solveButton.disabled = !currentState?.board?.nodes?.length;
+  renderState(currentState);
+  savePopupState({ currentState, solution: null, status: "Detected" });
 }
 
 async function solvePuzzle() {
@@ -288,6 +293,7 @@ async function sendMessageToCurrentTab(message) {
     throw new Error("No active tab found");
   }
 
+  currentTabId = tab.id;
   const response = await chrome.tabs.sendMessage(tab.id, message);
 
   if (!response?.ok) {
@@ -295,6 +301,16 @@ async function sendMessageToCurrentTab(message) {
   }
 
   return response;
+}
+
+function handleRuntimeMessage(message, sender) {
+  if (message?.type !== "PIPS_STATE_CHANGED") return false;
+  if (currentTabId !== null && sender?.tab?.id !== currentTabId) return false;
+  if (!message.state?.board?.nodes) return false;
+
+  applyDetectedState(message.state);
+  setStatus("Detected");
+  return false;
 }
 
 function nodeGridIndex(node, board) {
