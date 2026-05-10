@@ -387,8 +387,8 @@ button:disabled {
     transform: translate(-100%, -50%) rotate(0deg);
   }
   100% {
-    left: 100%;
-    transform: translate(-100%, -50%) rotate(720deg);
+    left: 150%;
+    transform: translate(0%, -50%) rotate(1080deg);
   }
 }
 

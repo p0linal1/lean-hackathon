@@ -107,7 +107,10 @@ async function solvePuzzle() {
   setStatus("Solving");
 
   try {
-    const solution = await solveWithBackend(currentState);
+    const placedDominoes = (currentState.fixedPlacements || []).map(p => p.domino);
+    const allDominoes = [...(currentState.dominoes || []), ...placedDominoes];
+    const stateToSolve = { ...currentState, dominoes: allDominoes, fixedPlacements: [] };
+    const solution = await solveWithBackend(stateToSolve);
     currentSolution = solution;
     renderState(currentState, solution, { animatePlacements: true });
     savePopupState({
