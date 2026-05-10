@@ -227,6 +227,40 @@ def parseRequestBody (raw : String) : String :=
   let parts := raw.splitOn "\r\n\r\n"
   String.intercalate "\r\n\r\n" (parts.drop 1)
 
+def parseContentLength (raw : String) : Option Nat :=
+  let headers := (raw.splitOn "\r\n\r\n").headD ""
+  headers.splitOn "\r\n" |>.findSome? fun line =>
+    match line.splitOn ":" with
+    | name :: rest =>
+        let name := name.trimAscii.toString
+        if name = "Content-Length" || name = "content-length" then
+          (String.intercalate ":" rest).trimAscii.toString.toNat?
+        else
+          none
+    | _ => none
+
+partial def readFullRequest (client : Socket.Client) (raw : String) : IO String := do
+  if (raw.splitOn "\r\n\r\n").length < 2 then
+    let chunk? ← Async.block (Socket.Client.recv? client 65536)
+    match chunk? with
+    | none => pure raw
+    | some chunk =>
+        let raw := raw ++ (String.fromUTF8? chunk).getD ""
+        readFullRequest client raw
+  else
+    match parseContentLength raw with
+    | none => pure raw
+    | some expectedBytes =>
+        if (parseRequestBody raw).toUTF8.size >= expectedBytes then
+          pure raw
+        else
+          let chunk? ← Async.block (Socket.Client.recv? client 65536)
+          match chunk? with
+          | none => pure raw
+          | some chunk =>
+              let raw := raw ++ (String.fromUTF8? chunk).getD ""
+              readFullRequest client raw
+
 def jsonResponse (status : String) (json : Lean.Json) : String :=
   buildResponse status json.compress
 
@@ -292,7 +326,7 @@ def readRequest (client : Socket.Client) : IO String := do
   let chunk? ← Async.block (Socket.Client.recv? client 65536)
   match chunk? with
   | none       => pure ""
-  | some chunk => pure <| (String.fromUTF8? chunk).getD ""
+  | some chunk => readFullRequest client <| (String.fromUTF8? chunk).getD ""
 
 def respond (client : Socket.Client) (message : String) : IO Unit := do
   Async.block (Socket.Client.send client message.toUTF8)
