@@ -107,13 +107,14 @@ def solve (pip : Pip) (dominoes : List Domino) (cs : List Constraint) : Option A
 /-- Any assignment that passes both checks is valid and satisfies constraints.
     This is the core soundness lemma — independent of the solver's search strategy. -/
 theorem checked_assignment_valid (pip : Pip) (a : AssignmentImpl) (cs : List Constraint)
+    (hNodup : ∀ c ∈ cs, match c with | .not_equiv ns => ns.Nodup | _ => True)
     (hCheck : assignmentIsValid pip a && checkAllConstraints a cs = true) :
     ValidAssignment (pip.toSpec) (toAssignmentSpec a) ∧
     SatisfiesAllConstraints (toAssignmentSpec a) (toConstraintSpecs cs) := by
   simp [Bool.and_eq_true] at hCheck
   obtain ⟨hValid, hConstraints⟩ := hCheck
   exact ⟨(assignmentIsValid_correct pip a).mp hValid,
-         (checkAllConstraints_correct a cs).mp hConstraints⟩
+         (checkAllConstraints_correct a cs hNodup).mp hConstraints⟩
 
 /-- solveAux only returns assignments that pass both checks. -/
 theorem solveAux_sound (pip : Pip) (cs : List Constraint)
@@ -144,13 +145,14 @@ theorem solve_sound (pip : Pip) (dominoes : List Domino) (cs : List Constraint)
 
 /-- Lift solve_sound to the spec level using the bridge theorems. -/
 theorem solve_sound_spec (pip : Pip) (dominoes : List Domino) (cs : List Constraint)
+    (hNodup : ∀ c ∈ cs, match c with | .not_equiv ns => ns.Nodup | _ => True)
     (a : AssignmentImpl)
     (hSolve : solve pip dominoes cs = some a) :
     ValidAssignment (pip.toSpec) (toAssignmentSpec a) ∧
     SatisfiesAllConstraints (toAssignmentSpec a) (toConstraintSpecs cs) := by
   have ⟨hValid, hConstraints⟩ := solve_sound pip dominoes cs a hSolve
   exact ⟨(assignmentIsValid_correct pip a).mp hValid,
-         (checkAllConstraints_correct a cs).mp hConstraints⟩
+         (checkAllConstraints_correct a cs hNodup).mp hConstraints⟩
 
 -- ============================================================================
 -- DEBUG: Test solver with the example puzzle from example.json
