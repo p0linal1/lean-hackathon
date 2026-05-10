@@ -574,11 +574,11 @@
 
     lastSnapshot = snapshot;
     window.__nytPipsState = cleanState;
-    chrome.runtime.sendMessage({
+    Promise.resolve(chrome.runtime.sendMessage({
       type: "PIPS_STATE_CHANGED",
       state: cleanState,
       reason
-    }).catch(() => {
+    })).catch(() => {
       // The popup is often closed; state is still available through READ_PIPS_STATE.
     });
   }

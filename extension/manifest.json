@@ -9,7 +9,6 @@
   ],
   "action": {
     "default_title": "Pips Helper",
-    "default_popup": "popup.html",
     "default_icon": {
       "16": "logo.png",
       "32": "logo.png",
@@ -25,6 +24,9 @@
   },
   "side_panel": {
     "default_path": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
   },
   "web_accessible_resources": [
     {

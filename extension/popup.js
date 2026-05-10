@@ -1,5 +1,7 @@
 let currentState = null;
 let currentTabId = null;
+let currentStateSnapshot = "";
+let refreshIntervalId = null;
 const LEAN_SERVER_STATE_URL = "http://127.0.0.1:8765/solve";
 const POPUP_STATE_KEY = "pipsHelper.popupState.v1";
 const TEST_RUN_KEY = "pipsHelper.backendTestRun.v1";
@@ -32,6 +34,7 @@ initializePopup();
 async function initializePopup() {
   const restored = restorePopupState();
   await readPuzzle({ preserveOnError: restored });
+  startStateRefreshWatcher();
 }
 
 async function readPuzzle(options = {}) {
@@ -49,10 +52,24 @@ async function readPuzzle(options = {}) {
 }
 
 function applyDetectedState(state) {
+  currentStateSnapshot = stateSnapshot(state);
   currentState = state;
   solveButton.disabled = !currentState?.board?.nodes?.length;
   renderState(currentState);
   savePopupState({ currentState, solution: null, status: "Detected" });
+}
+
+function stateSnapshot(state) {
+  return JSON.stringify(state ?? null);
+}
+
+function applyDetectedStateIfChanged(state) {
+  const snapshot = stateSnapshot(state);
+  if (snapshot === currentStateSnapshot) return false;
+
+  applyDetectedState(state);
+  setStatus("Detected");
+  return true;
 }
 
 async function solvePuzzle() {
@@ -308,9 +325,24 @@ function handleRuntimeMessage(message, sender) {
   if (currentTabId !== null && sender?.tab?.id !== currentTabId) return false;
   if (!message.state?.board?.nodes) return false;
 
-  applyDetectedState(message.state);
-  setStatus("Detected");
+  applyDetectedStateIfChanged(message.state);
   return false;
+}
+
+function startStateRefreshWatcher() {
+  clearInterval(refreshIntervalId);
+  refreshIntervalId = setInterval(refreshStateFromPageIfChanged, 1000);
+}
+
+async function refreshStateFromPageIfChanged() {
+  if (statusEl.textContent === "Solving") return;
+
+  try {
+    const response = await readStateFromCurrentTab();
+    if (response?.state?.board?.nodes) applyDetectedStateIfChanged(response.state);
+  } catch {
+    // The popup can stay open on non-puzzle tabs or while the page is transitioning.
+  }
 }
 
 function nodeGridIndex(node, board) {
@@ -531,6 +563,7 @@ function restorePopupState() {
   const saved = loadJson(POPUP_STATE_KEY);
   if (saved?.currentState?.board?.nodes) {
     currentState = saved.currentState;
+    currentStateSnapshot = stateSnapshot(currentState);
     solveButton.disabled = false;
     renderState(currentState, saved.solution ?? null);
     setStatus(saved.status ?? "Detected");
