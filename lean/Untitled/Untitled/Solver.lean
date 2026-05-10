@@ -32,7 +32,10 @@ def checkConstraintsPartial (nodeValues : HashMap Node Nat) (cs : List Constrain
       let vals := ns.filterMap nodeValues.get?
       match vals with
       | [] => true
-      | v :: rest => rest.all (· == v))
+      | v :: rest => rest.all (· == v)
+    | .not_equiv ns =>
+      let vals := ns.filterMap nodeValues.get?
+      vals.Nodup)
 
 /-- Detect a node that is uncovered but has no remaining edge to a free neighbor:
     such a node can never be filled, so the search subtree is dead. Cheap O(1)
@@ -196,13 +199,14 @@ def solve (pip : Pip) (dominoes : List Domino) (cs : List Constraint) :
 /-- Any assignment that passes both checks is valid and satisfies constraints.
     This is the core soundness lemma — independent of the solver's search strategy. -/
 theorem checked_assignment_valid (pip : Pip) (a : AssignmentImpl) (cs : List Constraint)
+    (hNodup : ∀ c ∈ cs, match c with | .not_equiv ns => ns.Nodup | _ => True)
     (hCheck : assignmentIsValid pip a && checkAllConstraints a cs = true) :
     ValidAssignment (pip.toSpec) (toAssignmentSpec a) ∧
     SatisfiesAllConstraints (toAssignmentSpec a) (toConstraintSpecs cs) := by
   simp [Bool.and_eq_true] at hCheck
   obtain ⟨hValid, hConstraints⟩ := hCheck
   exact ⟨(assignmentIsValid_correct pip a).mp hValid,
-         (checkAllConstraints_correct a cs).mp hConstraints⟩
+         (checkAllConstraints_correct a cs hNodup).mp hConstraints⟩
 
 -- NOTE: When `solveAux` was a pure `Option AssignmentImpl`, we had inductive
 -- soundness proofs (`solveAux_sound`/`solve_sound`/`solve_sound_spec`) that
@@ -217,7 +221,6 @@ theorem checked_assignment_valid (pip : Pip) (a : AssignmentImpl) (cs : List Con
 -- TODO: Re-prove `solveAux_sound` for the IO version, e.g. by writing a
 -- pure shadow function and proving equivalence under no-cancellation, or by
 -- doing the IO/EStateM reasoning directly.
-
 
 -- ============================================================================
 -- DEBUG: Test solver with the example puzzle from example.json
