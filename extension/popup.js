@@ -657,15 +657,17 @@ async function runPuzzleTests() {
       }))
   );
   const total = testCases.length;
+  const hardsTotal = testCases.filter((tc) => tc.difficultyLabel === "hard").length;
   const savedRun = loadTestRun();
   const shouldResume = savedRun?.total === total && savedRun.completed < total;
   const rows = shouldResume ? savedRun.rows ?? [] : [];
   let passed = rows.filter((row) => row.ok).length;
   let failed = rows.filter((row) => !row.ok).length;
+  let hardsPassed = rows.filter((row) => row.difficulty === "hard" && row.ok).length;
   let completed = rows.length;
   const summary = document.createElement("div");
   summary.className = "test-summary";
-  summary.textContent = formatTestSummary(completed, total, passed, failed);
+  summary.textContent = formatTestSummary(completed, total, passed, failed, hardsPassed, hardsTotal);
   testResultsEl.appendChild(summary);
   updateTestProgress(completed, total);
   renderSavedTestRows(rows);
@@ -682,14 +684,15 @@ async function runPuzzleTests() {
       const result = await runBackendPuzzleTest(testCase);
       if (result.ok) passed++;
       else failed++;
+      if (result.difficulty === "hard" && result.ok) hardsPassed++;
 
       completed++;
       rows.push(result);
       testResultsEl.appendChild(createTestRow(result));
       if (!result.ok) appendFailureRow(result);
-      summary.textContent = formatTestSummary(completed, total, passed, failed);
+      summary.textContent = formatTestSummary(completed, total, passed, failed, hardsPassed, hardsTotal);
       updateTestProgress(completed, total);
-      saveTestRun({ total, completed, rows });
+      saveTestRun({ total, completed, rows, hardsTotal });
 
       await nextFrame();
     }
@@ -698,9 +701,9 @@ async function runPuzzleTests() {
   const workerCount = Math.min(TEST_SOLVE_CONCURRENCY, remainingCases.length);
   await Promise.all(Array.from({ length: workerCount }, runNextTestCase));
 
-  summary.textContent = formatTestSummary(completed, total, passed, failed);
+  summary.textContent = formatTestSummary(completed, total, passed, failed, hardsPassed, hardsTotal);
   updateTestProgress(completed, total);
-  saveTestRun({ total, completed, rows });
+  saveTestRun({ total, completed, rows, hardsTotal });
 
   testButton.disabled = false;
 }
@@ -746,9 +749,10 @@ function restorePopupState() {
     testFailuresEl.classList.add("hidden");
     const passed = testRun.rows.filter((row) => row.ok).length;
     const failed = testRun.rows.filter((row) => !row.ok).length;
+    const hardsPassed = testRun.rows.filter((row) => row.difficulty === "hard" && row.ok).length;
     const summary = document.createElement("div");
     summary.className = "test-summary";
-    summary.textContent = formatTestSummary(testRun.completed, testRun.total, passed, failed);
+    summary.textContent = formatTestSummary(testRun.completed, testRun.total, passed, failed, hardsPassed, testRun.hardsTotal);
     testResultsEl.appendChild(summary);
     updateTestProgress(testRun.completed, testRun.total);
     renderSavedTestRows(testRun.rows);
@@ -802,8 +806,10 @@ function createTestRow(result) {
   return row;
 }
 
-function formatTestSummary(completed, total, passed, failed) {
-  return `${completed}/${total} solved, ${passed} passed, ${failed} failed`;
+function formatTestSummary(completed, total, passed, failed, hardsPassed, hardsTotal) {
+  const base = `${completed}/${total} solved, ${passed} passed, ${failed} failed`;
+  if (typeof hardsTotal !== "number") return base;
+  return `${base}, ${hardsPassed}/${hardsTotal} hards passed`;
 }
 
 function loadTestRun() {
