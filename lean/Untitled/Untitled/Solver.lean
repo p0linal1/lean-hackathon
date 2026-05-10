@@ -93,13 +93,88 @@ theorem solve_sound_spec (pip : Pip) (dominoes : List Domino) (cs : List Constra
 /-- assignmentIsValid is invariant under permutation. -/
 theorem assignmentIsValid_perm (pip : Pip) (a b : AssignmentImpl)
     (h : a.Perm b) : assignmentIsValid pip a = assignmentIsValid pip b := by
-  sorry
+  have hflat := List.Perm.flatMap_right (fun x => [x.2.1, x.2.2]) h
+  simp only [assignmentIsValid, allPlacedAdjacently, coversAllNodesImpl, assignedNodes,
+             noOverlapImpl]
+  rw [h.all_eq]
+  have hcov : (pip.nodes.all fun n => (a.flatMap (fun x => [x.2.1, x.2.2])).contains n) =
+              (pip.nodes.all fun n => (b.flatMap (fun x => [x.2.1, x.2.2])).contains n) := by
+    congr 1; ext n; exact hflat.contains_eq
+  have hnodup : decide (a.flatMap (fun x => [x.2.1, x.2.2])).Nodup =
+                decide (b.flatMap (fun x => [x.2.1, x.2.2])).Nodup := by
+    congr 1; exact propext hflat.nodup_iff
+  exact congrArg₂ (· && ·) (congrArg₂ (· && ·) rfl hcov) hnodup
 
-/-- checkAllConstraints is invariant under permutation.
-    nodeValueImpl depends only on membership in the list. -/
-theorem checkAllConstraints_perm (a b : AssignmentImpl) (cs : List Constraint)
-    (h : a.Perm b) : checkAllConstraints a cs = checkAllConstraints b cs := by
-  sorry
+/-- find? on permuted list with at most one match gives same result. -/
+private theorem find?_perm_unique {α : Type} [DecidableEq α] (p : α → Bool) (l₁ l₂ : List α)
+    (hperm : l₁.Perm l₂)
+    (huniq : ∀ x ∈ l₁, ∀ y ∈ l₁, p x = true → p y = true → x = y) :
+    l₁.find? p = l₂.find? p := by
+  -- List.find?_some gives p x = true
+  -- Need membership: List.mem_of_find?_eq_some or List.find?_mem
+  cases h1 : l₁.find? p with
+  | none =>
+    cases h2 : l₂.find? p with
+    | none => rfl
+    | some val =>
+      exfalso
+      have hsat := List.find?_some h2
+      have hmem2 : val ∈ l₂ := List.mem_of_find?_eq_some h2
+      have hmem1 := hperm.symm.mem_iff.mp hmem2
+      exact absurd hsat (List.find?_eq_none.mp h1 val hmem1)
+  | some val =>
+    have hsat := List.find?_some h1
+    have hmem1 : val ∈ l₁ := List.mem_of_find?_eq_some h1
+    have hmem2 := hperm.mem_iff.mp hmem1
+    cases h2 : l₂.find? p with
+    | none =>
+      exact absurd hsat (List.find?_eq_none.mp h2 val hmem2)
+    | some val2 =>
+      have hsat2 := List.find?_some h2
+      have hmem2' : val2 ∈ l₂ := List.mem_of_find?_eq_some h2
+      have hmem1' := hperm.symm.mem_iff.mp hmem2'
+      exact congrArg some (huniq val hmem1 val2 hmem1' hsat hsat2)
+
+/-- nodeValueImpl gives same result on permuted valid assignments. -/
+private theorem nodeValueImpl_perm (a b : AssignmentImpl) (n : Node)
+    (h : a.Perm b)
+    (hnodup : (a.flatMap (fun x => [x.2.1, x.2.2])).Nodup) :
+    nodeValueImpl a n = nodeValueImpl b n := by
+  unfold nodeValueImpl
+  have huniq_fst : ∀ x ∈ a, ∀ y ∈ a, (fun t : Domino × Node × Node => t.2.1 == n) x = true →
+      (fun t : Domino × Node × Node => t.2.1 == n) y = true → x = y := by
+    sorry
+  have huniq_snd : ∀ x ∈ a, ∀ y ∈ a, (fun t : Domino × Node × Node => t.2.2 == n) x = true →
+      (fun t : Domino × Node × Node => t.2.2 == n) y = true → x = y := by
+    sorry
+  rw [find?_perm_unique _ a b h huniq_fst, find?_perm_unique _ a b h huniq_snd]
+
+/-- checkConstraint gives same result on permuted valid assignments. -/
+private theorem checkConstraint_perm (a b : AssignmentImpl) (c : Constraint)
+    (h : a.Perm b)
+    (hnodup : (a.flatMap (fun x => [x.2.1, x.2.2])).Nodup) :
+    checkConstraint a c = checkConstraint b c := by
+  -- checkConstraint uses nodeValueImpl, which depends on find?
+  -- With Nodup, nodeValueImpl gives same results on permutations
+  have hnv : ∀ n, nodeValueImpl a n = nodeValueImpl b n :=
+    fun n => nodeValueImpl_perm a b n h hnodup
+  simp only [checkConstraint]
+  cases c with
+  | sum ns target ty => simp [hnv]
+  | equiv ns => simp [hnv]
+  | not_equiv ns => simp [hnv]
+
+/-- checkAllConstraints is invariant under permutation (given valid assignment). -/
+theorem checkAllConstraints_perm (pip : Pip) (a b : AssignmentImpl) (cs : List Constraint)
+    (h : a.Perm b)
+    (hvalid : assignmentIsValid pip a = true) :
+    checkAllConstraints a cs = checkAllConstraints b cs := by
+  have hnodup : (a.flatMap (fun x => [x.2.1, x.2.2])).Nodup := by
+    simp [assignmentIsValid, Bool.and_eq_true, noOverlapImpl, assignedNodes] at hvalid
+    exact hvalid.2
+  simp only [checkAllConstraints]
+  congr 1; funext c
+  exact checkConstraint_perm a b c h hnodup
 
 /-- A valid extension of an assignment: a list of placements that, when prepended,
     makes the whole thing valid and constraint-satisfying. Each placement uses
@@ -206,7 +281,7 @@ theorem solveAux_complete (pip : Pip) (cs : List Constraint)
       have hvalidRest : assignmentIsValid pip (extRest ++ (placement :: assignment)) = true := by
         rw [← assignmentIsValid_perm pip _ _ hperm]; exact hvalid
       have hconstRest : checkAllConstraints (extRest ++ (placement :: assignment)) cs = true := by
-        rw [← checkAllConstraints_perm _ _ cs hperm]; exact hconst
+        rw [← checkAllConstraints_perm pip _ _ cs hperm hvalid]; exact hconst
       exact ih (placement :: assignment) hRecNone
         ⟨extRest, hrestMap, hvalidRest, hconstRest⟩
 
