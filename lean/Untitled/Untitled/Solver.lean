@@ -1,4 +1,5 @@
 import Untitled.Pips
+import Mathlib.Data.List.Pairwise
 
 open SumConstraintType
 
@@ -135,18 +136,46 @@ private theorem find?_perm_unique {α : Type} [DecidableEq α] (p : α → Bool)
       have hmem1' := hperm.symm.mem_iff.mp hmem2'
       exact congrArg some (huniq val hmem1 val2 hmem1' hsat hsat2)
 
+/-- In a list with Nodup flattened nodes, at most one tuple has a given node at fst. -/
+private theorem unique_fst_of_nodup (a : AssignmentImpl) (n : Node)
+    (hnodup : (a.flatMap (fun x => [x.2.1, x.2.2])).Nodup) :
+    ∀ x ∈ a, ∀ y ∈ a, (x.2.1 == n) = true → (y.2.1 == n) = true → x = y := by
+  intro x hx y hy hpx hpy
+  simp at hpx hpy
+  by_contra hne
+  have ⟨_, hpw⟩ := List.nodup_flatMap.mp hnodup
+  have hSym : Symmetric (Function.onFun List.Disjoint
+      (fun x : Domino × Node × Node => [x.2.1, x.2.2])) :=
+    fun _ _ h a ha hb => h hb ha
+  have hdisj := hpw.forall hSym hx hy hne
+  have hmx : n ∈ ([x.2.1, x.2.2] : List Node) := by rw [← hpx]; exact .head ..
+  have hmy : n ∈ ([y.2.1, y.2.2] : List Node) := by rw [← hpy]; exact .head ..
+  exact hdisj hmx hmy
+
+/-- In a list with Nodup flattened nodes, at most one tuple has a given node at snd. -/
+private theorem unique_snd_of_nodup (a : AssignmentImpl) (n : Node)
+    (hnodup : (a.flatMap (fun x => [x.2.1, x.2.2])).Nodup) :
+    ∀ x ∈ a, ∀ y ∈ a, (x.2.2 == n) = true → (y.2.2 == n) = true → x = y := by
+  intro x hx y hy hpx hpy
+  simp at hpx hpy
+  by_contra hne
+  have ⟨_, hpw⟩ := List.nodup_flatMap.mp hnodup
+  have hSym : Symmetric (Function.onFun List.Disjoint
+      (fun x : Domino × Node × Node => [x.2.1, x.2.2])) :=
+    fun _ _ h a ha hb => h hb ha
+  have hdisj := hpw.forall hSym hx hy hne
+  have hmx : n ∈ ([x.2.1, x.2.2] : List Node) := by rw [← hpx]; exact .tail _ (.head ..)
+  have hmy : n ∈ ([y.2.1, y.2.2] : List Node) := by rw [← hpy]; exact .tail _ (.head ..)
+  exact hdisj hmx hmy
+
 /-- nodeValueImpl gives same result on permuted valid assignments. -/
 private theorem nodeValueImpl_perm (a b : AssignmentImpl) (n : Node)
     (h : a.Perm b)
     (hnodup : (a.flatMap (fun x => [x.2.1, x.2.2])).Nodup) :
     nodeValueImpl a n = nodeValueImpl b n := by
   unfold nodeValueImpl
-  have huniq_fst : ∀ x ∈ a, ∀ y ∈ a, (fun t : Domino × Node × Node => t.2.1 == n) x = true →
-      (fun t : Domino × Node × Node => t.2.1 == n) y = true → x = y := by
-    sorry
-  have huniq_snd : ∀ x ∈ a, ∀ y ∈ a, (fun t : Domino × Node × Node => t.2.2 == n) x = true →
-      (fun t : Domino × Node × Node => t.2.2 == n) y = true → x = y := by
-    sorry
+  have huniq_fst := unique_fst_of_nodup a n hnodup
+  have huniq_snd := unique_snd_of_nodup a n hnodup
   rw [find?_perm_unique _ a b h huniq_fst, find?_perm_unique _ a b h huniq_snd]
 
 /-- checkConstraint gives same result on permuted valid assignments. -/
