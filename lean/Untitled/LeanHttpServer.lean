@@ -177,7 +177,7 @@ end PipsConvert
 namespace LeanHttpServer
 
 def defaultPort : UInt16 := UInt16.ofNat 8765
-def solveTimeoutMs : Nat := 30000
+def solveTimeoutMs : Nat := 60000
 
 def localhost (port : UInt16) : SocketAddress :=
   .v4 { addr := IPv4Addr.ofParts 127 0 0 1, port := port }
