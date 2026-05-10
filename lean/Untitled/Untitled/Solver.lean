@@ -138,11 +138,48 @@ def findNextEmptyNode (pip : Pip) (cs : List Constraint)
       ac < bc || (ac == bc && emptyNeighborCount nodeValues edges a <= emptyNeighborCount nodeValues edges b))
     |>.head?
 
-/-- Core backtracking solver. Picks the most constrained empty node first, then
+/-- Pure core backtracking solver. Picks the most constrained empty node first, then
     tries its remaining incident edges and every remaining domino value.
     `remaining` is a multiset, so identical dominoes don't generate duplicate orderings.
     `edges` is maintained incrementally: it contains exactly the edges whose endpoints
-    are both unused in `assignment`, so we never recompute it from scratch.
+    are both unused in `assignment`, so we never recompute it from scratch. -/
+def solveAuxFuelCore
+    (fuel : Nat)
+    (pip : Pip)
+    (cs : List Constraint)
+    (remaining : DominoBag)
+    (assignment : AssignmentImpl)
+    (edges : List (Node × Node))
+    (nodeValues : HashMap Node Nat) : Option AssignmentImpl :=
+  if !checkConstraintsPartial nodeValues remaining cs then none
+  else
+    match remaining, fuel with
+    | [], _ =>
+      if assignmentIsValid pip assignment && checkAllConstraints assignment cs then
+        some assignment
+      else
+        none
+    | _ :: _, 0 => none
+    | _ :: _, fuel' + 1 =>
+      let totalCount := DominoBag.size remaining
+      let uncoveredNodeCount := pip.nodes.countP (λ n => !nodeValues.contains n)
+      if uncoveredNodeCount != 2 * totalCount || hasDeadEnd pip nodeValues edges then
+        none
+      else
+        match findNextEmptyNode pip cs remaining nodeValues edges with
+        | none => none
+        | some n₁ =>
+          (incidentEdges edges n₁).findSome? (λ edge =>
+            let n₂ := otherEndpoint edge n₁
+            (DominoBag.choices remaining).findSome? (λ (domino, rest) =>
+              let placements := tryPlace domino n₁ n₂
+              placements.findSome? (λ (d, pn₁, pn₂) =>
+                let edges' := edges.filter (λ (a, b) =>
+                  a != pn₁ && a != pn₂ && b != pn₁ && b != pn₂)
+                let nodeValues' := (nodeValues.insert pn₁ d.left).insert pn₂ d.right
+                solveAuxFuelCore fuel' pip cs rest ((d, pn₁, pn₂) :: assignment) edges' nodeValues')))
+
+/-- Core backtracking solver.
     `BaseIO`-valued so the search can be cooperatively cancelled — each call checks
     `IO.checkCanceled` and returns `none` immediately if the host task was cancelled. -/
 def solveAuxFuel
@@ -154,33 +191,7 @@ def solveAuxFuel
     (edges : List (Node × Node))
     (nodeValues : HashMap Node Nat) : BaseIO (Option AssignmentImpl) := do
   if ← IO.checkCanceled then return none
-  if !checkConstraintsPartial nodeValues remaining cs then return none
-  match remaining with
-  | [] =>
-    if assignmentIsValid pip assignment && checkAllConstraints assignment cs then
-      return some assignment
-    else
-      return none
-  | _ =>
-    match fuel with
-    | 0 => return none
-    | fuel' + 1 =>
-      let totalCount := DominoBag.size remaining
-      let uncoveredNodeCount := pip.nodes.countP (λ n => !nodeValues.contains n)
-      if uncoveredNodeCount != 2 * totalCount || hasDeadEnd pip nodeValues edges then
-        return none
-      match findNextEmptyNode pip cs remaining nodeValues edges with
-      | none => return none
-      | some n₁ =>
-        (incidentEdges edges n₁).findSomeM? (λ edge => do
-          let n₂ := otherEndpoint edge n₁
-          (DominoBag.choices remaining).findSomeM? (λ (domino, rest) => do
-            let placements := tryPlace domino n₁ n₂
-            placements.findSomeM? (λ (d, pn₁, pn₂) => do
-              let edges' := edges.filter (λ (a, b) =>
-                a != pn₁ && a != pn₂ && b != pn₁ && b != pn₂)
-              let nodeValues' := (nodeValues.insert pn₁ d.left).insert pn₂ d.right
-              solveAuxFuel fuel' pip cs rest ((d, pn₁, pn₂) :: assignment) edges' nodeValues')))
+  return solveAuxFuelCore fuel pip cs remaining assignment edges nodeValues
 
 def solveAux
     (pip : Pip)
@@ -248,19 +259,141 @@ theorem checked_assignment_valid (pip : Pip) (a : AssignmentImpl) (cs : List Con
   exact ⟨(assignmentIsValid_correct pip a).mp hValid,
          (checkAllConstraints_correct a cs hNodup).mp hConstraints⟩
 
--- NOTE: When `solveAux` was a pure `Option AssignmentImpl`, we had inductive
--- soundness proofs (`solveAux_sound`/`solve_sound`/`solve_sound_spec`) that
--- threaded through `simp [solveAux]` and the `findSome?` extraction lemmas.
--- After moving to `BaseIO` for cooperative cancellation, those proofs no
--- longer compile: `simp` can't make progress on the `do`-block, and reasoning
--- about the IO state requires `EStateM.Result.ok` plumbing. The leaf
--- correctness lemma below (`checked_assignment_valid`) is unchanged and is
--- the only piece soundness ultimately depends on — any `some a` returned by
--- the IO solver came from that leaf check.
---
--- TODO: Re-prove `solveAux_sound` for the IO version, e.g. by writing a
--- pure shadow function and proving equivalence under no-cancellation, or by
--- doing the IO/EStateM reasoning directly.
+private theorem findSome?_sound {α β : Type} (f : α → Option β) :
+    ∀ (xs : List α) {b : β},
+      xs.findSome? f = some b →
+      ∃ x ∈ xs, f x = some b := by
+  intro xs
+  induction xs with
+  | nil =>
+      intro b h
+      rw [List.findSome?_nil] at h
+      contradiction
+  | cons x xs ih =>
+      intro b h
+      rw [List.findSome?_cons] at h
+      cases hfx : f x with
+      | none =>
+          simp [hfx] at h
+          obtain ⟨y, hy, hfy⟩ := ih h
+          exact ⟨y, by simp [hy], hfy⟩
+      | some b' =>
+          simp [hfx] at h
+          subst b'
+          exact ⟨x, by simp, hfx⟩
+
+private theorem checked_leaf_sound
+    (pip : Pip) (assignment : AssignmentImpl) (cs : List Constraint) {a : AssignmentImpl}
+    (hRun :
+      (if assignmentIsValid pip assignment && checkAllConstraints assignment cs then
+        some assignment
+      else
+        none) = some a) :
+    assignmentIsValid pip a && checkAllConstraints a cs = true := by
+  cases hCheck : assignmentIsValid pip assignment && checkAllConstraints assignment cs <;>
+    simp [hCheck] at hRun
+  cases hRun
+  simpa using hCheck
+
+private theorem solveAuxFuelCore_sound_checked
+    (fuel : Nat)
+    (pip : Pip)
+    (cs : List Constraint)
+    (remaining : DominoBag)
+    (assignment : AssignmentImpl)
+    (edges : List (Node × Node))
+    (nodeValues : HashMap Node Nat)
+    {a : AssignmentImpl}
+    (hRun : solveAuxFuelCore fuel pip cs remaining assignment edges nodeValues = some a) :
+    assignmentIsValid pip a && checkAllConstraints a cs = true := by
+  induction fuel generalizing remaining assignment edges nodeValues with
+  | zero =>
+      unfold solveAuxFuelCore at hRun
+      split at hRun
+      · contradiction
+      · cases remaining with
+        | nil =>
+            exact checked_leaf_sound pip assignment cs hRun
+        | cons _ _ =>
+            contradiction
+  | succ fuel ih =>
+      unfold solveAuxFuelCore at hRun
+      cases remaining with
+      | nil =>
+          simp at hRun
+          rcases hRun with ⟨_, ⟨⟨hValid, hConstraints⟩, hEq⟩⟩
+          subst a
+          simp [hValid, hConstraints]
+      | cons head tail =>
+        simp at hRun
+        rcases hRun with ⟨_, hRun⟩
+        split at hRun
+        · rcases hRun with ⟨_, hnone⟩
+          contradiction
+        · rcases hRun with ⟨_, hRun⟩
+          obtain ⟨edge, _hedge, hedge⟩ := findSome?_sound _ _ hRun
+          obtain ⟨choice, _hchoice, hchoice⟩ := findSome?_sound _ _ hedge
+          rcases choice with ⟨domino, rest⟩
+          obtain ⟨placement, _hplacement, hplacement⟩ := findSome?_sound _ _ hchoice
+          rcases placement with ⟨d, pn₁, pn₂⟩
+          exact ih rest ((d, pn₁, pn₂) :: assignment)
+            (edges.filter fun (a, b) =>
+              a != pn₁ && a != pn₂ && b != pn₁ && b != pn₂)
+            ((nodeValues.insert pn₁ d.left).insert pn₂ d.right)
+            hplacement
+
+private theorem solveAuxFuel_sound_checked
+    (fuel : Nat)
+    (pip : Pip)
+    (cs : List Constraint)
+    (remaining : DominoBag)
+    (assignment : AssignmentImpl)
+    (edges : List (Node × Node))
+    (nodeValues : HashMap Node Nat)
+    (s : Void IO.RealWorld)
+    {a : AssignmentImpl}
+    (hRun : (solveAuxFuel fuel pip cs remaining assignment edges nodeValues s).val = some a) :
+    assignmentIsValid pip a && checkAllConstraints a cs = true := by
+  unfold solveAuxFuel at hRun
+  cases hCanceled : IO.checkCanceled s with
+  | mk canceled s₁ =>
+      simp [Bind.bind, Pure.pure, instMonadBaseIO._aux_5, instMonadBaseIO._aux_13,
+        ST.bind, hCanceled] at hRun
+      split at hRun
+      · contradiction
+      · exact solveAuxFuelCore_sound_checked fuel pip cs remaining assignment edges nodeValues hRun
+
+theorem solveAuxFuel_sound
+    (fuel : Nat)
+    (pip : Pip)
+    (cs : List Constraint)
+    (remaining : DominoBag)
+    (assignment : AssignmentImpl)
+    (edges : List (Node × Node))
+    (nodeValues : HashMap Node Nat)
+    (s : Void IO.RealWorld)
+    {a : AssignmentImpl}
+    (hNodup : ∀ c ∈ cs, match c with | .not_equiv ns => ns.Nodup | _ => True)
+    (hRun : (solveAuxFuel fuel pip cs remaining assignment edges nodeValues s).val = some a) :
+    ValidAssignment (pip.toSpec) (toAssignmentSpec a) ∧
+    SatisfiesAllConstraints (toAssignmentSpec a) (toConstraintSpecs cs) :=
+  checked_assignment_valid pip a cs hNodup
+    (solveAuxFuel_sound_checked fuel pip cs remaining assignment edges nodeValues s hRun)
+
+theorem solveAux_sound
+    (pip : Pip)
+    (cs : List Constraint)
+    (remaining : DominoBag)
+    (assignment : AssignmentImpl)
+    (edges : List (Node × Node))
+    (nodeValues : HashMap Node Nat)
+    (s : Void IO.RealWorld)
+    {a : AssignmentImpl}
+    (hNodup : ∀ c ∈ cs, match c with | .not_equiv ns => ns.Nodup | _ => True)
+    (hRun : (solveAux pip cs remaining assignment edges nodeValues s).val = some a) :
+    ValidAssignment (pip.toSpec) (toAssignmentSpec a) ∧
+    SatisfiesAllConstraints (toAssignmentSpec a) (toConstraintSpecs cs) :=
+  solveAuxFuel_sound remaining.size pip cs remaining assignment edges nodeValues s hNodup hRun
 
 -- ============================================================================
 -- DEBUG: Test solver with the example puzzle from example.json
