@@ -1,4 +1,4 @@
-import Mathlib.Data.List.Nodup
+import Std
 
 /-!
 # Pip Puzzle Formalization
@@ -273,9 +273,11 @@ theorem coversAllNodesImpl_correct (pip : Pip) (a : AssignmentImpl)
   constructor
   · intro hcovers n hmem
     obtain ⟨d, n₁, n₂, hin, hor⟩ := hcovers n hmem
-    exact ⟨d, n₁, n₂, hin, hor.imp Eq.symm Eq.symm⟩
+    exact ⟨{ domino := d, fst := n₁, snd := n₂ },
+           ⟨⟨d, n₁, n₂, hin, rfl⟩, hor.imp Eq.symm Eq.symm⟩⟩
   · intro h n hmem
-    obtain ⟨d, n₁, n₂, hin, hor⟩ := h n hmem
+    obtain ⟨p, ⟨⟨d, n₁, n₂, hin, hp⟩, hor⟩⟩ := h n hmem
+    subst hp
     exact ⟨d, n₁, n₂, hin, hor.imp Eq.symm Eq.symm⟩
 
 -- Main bridge theorem
