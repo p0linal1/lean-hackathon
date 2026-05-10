@@ -175,7 +175,29 @@ end PipsConvert
 namespace LeanHttpServer
 
 def defaultPort : UInt16 := UInt16.ofNat 8765
-def solveTimeoutMs : Nat := 10000
+def solveTimeoutMs : Nat := 30000
+
+/-- Outcome of running the cancellable solver under a timeout. -/
+inductive SolveOutcome
+  | solved (assignment : AssignmentImpl)
+  | unsolved
+  | timedOut
+deriving Inhabited
+
+/-- Poll a solver `Task` until it finishes or the deadline elapses. On timeout,
+    requests cooperative cancellation via `IO.cancel`; the solver checks
+    `IO.checkCanceled` between recursive calls and bails out. -/
+partial def awaitSolveTask (task : Task (Option AssignmentImpl)) (deadlineMs : Nat) :
+    BaseIO SolveOutcome := do
+  if ← IO.hasFinished task then
+    match ← IO.wait task with
+    | some a => return .solved a
+    | none => return .unsolved
+  if (← IO.monoMsNow) >= deadlineMs then
+    IO.cancel task
+    return .timedOut
+  IO.sleep 10
+  awaitSolveTask task deadlineMs
 
 def localhost (port : UInt16) : SocketAddress :=
   .v4 { addr := IPv4Addr.ofParts 127 0 0 1, port := port }
@@ -231,7 +253,9 @@ def handleRequest (stateRef : IO.Ref (Option Lean.Json)) (method path body : Str
           IO.println s!"[lean-http-server] parsed: {pip.nodes.length} nodes, \
             {pip.edges.length} edges, {dominoes.length} dominoes, \
             {constraints.length} constraints"
-          let result ← solveTimed pip dominoes constraints solveTimeoutMs
+          let task ← (solve pip dominoes constraints).asTask
+          let deadline := (← IO.monoMsNow) + solveTimeoutMs
+          let result ← awaitSolveTask task deadline
           match result with
           | .solved assignment =>
             IO.println s!"[lean-http-server] SOLVED! assignment has {assignment.length} placements"
