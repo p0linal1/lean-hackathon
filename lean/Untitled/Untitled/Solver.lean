@@ -11,23 +11,66 @@ def Pip.neighbors (pip : Pip) (n : Node) : List Node :=
     else if b == n then some a
     else none)
 
+/-- Remaining dominoes as a multiset: distinct domino values paired with their
+    multiplicity. Avoids exploring permutations of identical dominoes — placing
+    `(1,1)` at edge X then at edge Y is now indistinguishable from the reverse. -/
+abbrev DominoBag := List (Domino × Nat)
+
+/-- Total number of placeable dominoes left in the bag. -/
+@[simp] def DominoBag.size : DominoBag → Nat
+  | [] => 0
+  | (_, n) :: rest => n + DominoBag.size rest
+
+/-- Group equal dominoes, preserving first-occurrence order. -/
+def DominoBag.ofList (dominoes : List Domino) : DominoBag :=
+  dominoes.eraseDups.map fun d => (d, dominoes.countP (· == d))
+
+def DominoBag.choices : DominoBag → List (Domino × DominoBag)
+  | [] => []
+  | (_, 0) :: rest => DominoBag.choices rest
+  | (domino, n + 1) :: rest =>
+    let decremented := if n = 0 then rest else (domino, n) :: rest
+    (domino, decremented) ::
+      (DominoBag.choices rest).map
+        (λ (choice, withoutChoice) => (choice, (domino, n + 1) :: withoutChoice))
+
+def DominoBag.values (bag : DominoBag) : List Nat :=
+  bag.flatMap fun (d, n) => List.replicate n d.left ++ List.replicate n d.right
+
+def minPossibleSum (values : List Nat) (count : Nat) : Nat :=
+  (values.mergeSort (· <= ·)).take count |>.sum
+
+def maxPossibleSum (values : List Nat) (count : Nat) : Nat :=
+  (values.mergeSort (λ a b => b <= a)).take count |>.sum
+
 /-- Partial constraint check using the incrementally-maintained node-value map.
     Fails as soon as the partial state is unrecoverable (e.g. the running sum
     already exceeds an `.eq` target, or two placed values disagree under `.equiv`),
     not just when all constraint nodes are filled. Soundness-irrelevant: the leaf
     check still runs `checkAllConstraints` against the full assignment. -/
-def checkConstraintsPartial (nodeValues : HashMap Node Nat) (cs : List Constraint) : Bool :=
+def checkConstraintsPartial (nodeValues : HashMap Node Nat) (remaining : DominoBag)
+    (cs : List Constraint) : Bool :=
+  let remainingValues := remaining.values
   cs.all (λ c =>
     match c with
     | .sum ns target ty =>
       let vals := ns.filterMap nodeValues.get?
       let isFull := vals.length == ns.length
+      let missing := ns.length - vals.length
       let s := vals.sum
       match ty with
-      -- Values are Nat (non-negative), so partial sum can only grow.
-      | .eq => if isFull then s == target else s <= target
-      | .lt => s < target
-      | .gt => if isFull then s > target else true
+      | .eq =>
+          if isFull then
+            s == target
+          else
+            s + minPossibleSum remainingValues missing <= target &&
+            target <= s + maxPossibleSum remainingValues missing
+      | .lt => s + minPossibleSum remainingValues missing < target
+      | .gt =>
+          if isFull then
+            s > target
+          else
+            target < s + maxPossibleSum remainingValues missing
     | .equiv ns =>
       let vals := ns.filterMap nodeValues.get?
       match vals with
@@ -57,10 +100,6 @@ def orderedUnusedNodes (pip : Pip) (nodeValues : HashMap Node Nat)
   (pip.nodes.filter (λ n => !nodeValues.contains n)).mergeSort
     (λ a b => emptyNeighborCount nodeValues edges a <= emptyNeighborCount nodeValues edges b)
 
-def findNextEmptyNode (pip : Pip) (nodeValues : HashMap Node Nat)
-    (edges : List (Node × Node)) : Option Node :=
-  (orderedUnusedNodes pip nodeValues edges).head?
-
 def incidentEdges (edges : List (Node × Node)) (n : Node) : List (Node × Node) :=
   edges.filter (λ (a, b) => a == n || b == n)
 
@@ -75,28 +114,29 @@ def tryPlace (domino : Domino) (n₁ n₂ : Node) : List (Domino × Node × Node
   else
     [(domino, n₁, n₂), (domino, n₂, n₁)]
 
-/-- Remaining dominoes as a multiset: distinct domino values paired with their
-    multiplicity. Avoids exploring permutations of identical dominoes — placing
-    `(1,1)` at edge X then at edge Y is now indistinguishable from the reverse. -/
-abbrev DominoBag := List (Domino × Nat)
+def viablePlacementCount (pip : Pip) (cs : List Constraint)
+    (remaining : DominoBag) (nodeValues : HashMap Node Nat)
+    (edges : List (Node × Node)) (n₁ : Node) : Nat :=
+  (incidentEdges edges n₁).foldl (init := 0) fun acc edge =>
+    let n₂ := otherEndpoint edge n₁
+    acc + (DominoBag.choices remaining).foldl (init := 0) (fun acc (domino, rest) =>
+      acc + (tryPlace domino n₁ n₂).countP (fun (d, pn₁, pn₂) =>
+        let edges' := edges.filter (λ (a, b) =>
+          a != pn₁ && a != pn₂ && b != pn₁ && b != pn₂)
+        let nodeValues' := (nodeValues.insert pn₁ d.left).insert pn₂ d.right
+        checkConstraintsPartial nodeValues' rest cs &&
+        !hasDeadEnd pip nodeValues' edges'))
 
-/-- Total number of placeable dominoes left in the bag. -/
-@[simp] def DominoBag.size : DominoBag → Nat
-  | [] => 0
-  | (_, n) :: rest => n + DominoBag.size rest
-
-/-- Group equal dominoes, preserving first-occurrence order. -/
-def DominoBag.ofList (dominoes : List Domino) : DominoBag :=
-  dominoes.eraseDups.map fun d => (d, dominoes.countP (· == d))
-
-def DominoBag.choices : DominoBag → List (Domino × DominoBag)
-  | [] => []
-  | (_, 0) :: rest => DominoBag.choices rest
-  | (domino, n + 1) :: rest =>
-    let decremented := if n = 0 then rest else (domino, n) :: rest
-    (domino, decremented) ::
-      (DominoBag.choices rest).map
-        (λ (choice, withoutChoice) => (choice, (domino, n + 1) :: withoutChoice))
+def findNextEmptyNode (pip : Pip) (cs : List Constraint)
+    (remaining : DominoBag) (nodeValues : HashMap Node Nat)
+    (edges : List (Node × Node)) : Option Node :=
+  let nodes := orderedUnusedNodes pip nodeValues edges
+  nodes.mergeSort
+    (λ a b =>
+      let ac := viablePlacementCount pip cs remaining nodeValues edges a
+      let bc := viablePlacementCount pip cs remaining nodeValues edges b
+      ac < bc || (ac == bc && emptyNeighborCount nodeValues edges a <= emptyNeighborCount nodeValues edges b))
+    |>.head?
 
 /-- Core backtracking solver. Picks the most constrained empty node first, then
     tries its remaining incident edges and every remaining domino value.
@@ -114,7 +154,7 @@ def solveAuxFuel
     (edges : List (Node × Node))
     (nodeValues : HashMap Node Nat) : BaseIO (Option AssignmentImpl) := do
   if ← IO.checkCanceled then return none
-  if !checkConstraintsPartial nodeValues cs then return none
+  if !checkConstraintsPartial nodeValues remaining cs then return none
   match remaining with
   | [] =>
     if assignmentIsValid pip assignment && checkAllConstraints assignment cs then
@@ -129,7 +169,7 @@ def solveAuxFuel
       let uncoveredNodeCount := pip.nodes.countP (λ n => !nodeValues.contains n)
       if uncoveredNodeCount != 2 * totalCount || hasDeadEnd pip nodeValues edges then
         return none
-      match findNextEmptyNode pip nodeValues edges with
+      match findNextEmptyNode pip cs remaining nodeValues edges with
       | none => return none
       | some n₁ =>
         (incidentEdges edges n₁).findSomeM? (λ edge => do
@@ -170,7 +210,7 @@ partial def raceTasks : List (Task (Option AssignmentImpl)) → BaseIO (Option A
 def solve (pip : Pip) (dominoes : List Domino) (cs : List Constraint) :
     BaseIO (Option AssignmentImpl) := do
   let bag := DominoBag.ofList dominoes
-  match findNextEmptyNode pip (∅ : HashMap Node Nat) pip.edges with
+  match findNextEmptyNode pip cs bag (∅ : HashMap Node Nat) pip.edges with
   | none => solveAux pip cs bag [] pip.edges ∅
   | some n₁ =>
     let placements : List (Domino × Node × Node × DominoBag) :=
