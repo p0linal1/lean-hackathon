@@ -99,7 +99,7 @@ def parseConstraints (json : Lean.Json) : Except String (List Constraint) := do
       | .str s => pure s | _ => throw "constraint type not a string"
     match ty with
     | "equal"   => return some (Constraint.equiv nodes)
-    | "unequal" => return none
+    | "unequal" => return some (Constraint.not_equiv nodes)
     | "sum"     =>
         let value ← match jsonNat? (← cJ.getObjVal? "value") with
           | some n => pure n | none => throw "sum value is not a nat"
@@ -145,6 +145,8 @@ private def constraintJ (c : Constraint) : Lean.Json :=
              ]
   | .equiv ns =>
       .mkObj [("type", .str "equiv"), ("nodes", .arr (ns.map nodeJ).toArray)]
+  | .not_equiv ns =>
+      .mkObj [("type", .str "not_equiv"), ("nodes", .arr (ns.map nodeJ).toArray)]
 
 def toResponseJson (pip : Pip) (dominoes : List Domino) (constraints : List Constraint) :
     Lean.Json :=

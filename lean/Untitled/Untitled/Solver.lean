@@ -36,6 +36,12 @@ def checkConstraintPartial (assignment : AssignmentImpl) : Constraint → Bool
     match vals with
     | [] => true
     | v :: rest => rest.all (· == v)
+  | .not_equiv ns =>
+      let vals := ns.filterMap (nodeValueImpl assignment)
+      if vals.length == ns.length then
+        vals.Nodup
+      else true
+
 
 /-- Check constraints against the current partial assignment. -/
 def checkConstraintsPartial (assignment : AssignmentImpl) (cs : List Constraint) : Bool :=
