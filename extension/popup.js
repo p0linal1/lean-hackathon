@@ -22,6 +22,7 @@ const testButton = document.querySelector("#testButton");
 const statusEl = document.querySelector("#status");
 const boardEl = document.querySelector("#board");
 const boardSection = document.querySelector("#board-section");
+const dominoTrayEl = document.querySelector("#domino-tray");
 const testSection = document.querySelector("#test-section");
 const testProgressEl = document.querySelector("#test-progress");
 const testProgressFillEl = document.querySelector("#test-progress-fill");
@@ -81,7 +82,7 @@ async function solvePuzzle() {
 
   try {
     const solution = await solveWithBackend(currentState);
-    renderState(currentState, solution);
+    renderState(currentState, solution, { animatePlacements: true });
     savePopupState({
       currentState,
       solution,
@@ -163,16 +164,17 @@ function backendAssignmentToSolution(assignment) {
   return { placements, valuesByNode };
 }
 
-function renderState(state, solution = null) {
+function renderState(state, solution = null, options = {}) {
   const board = state.board;
 
-  renderBoard(board, solution);
+  renderBoard(board, solution, options);
+  renderDominoTray(state.dominoes ?? [], solution);
   const hasBoard = Array.isArray(board?.nodes);
   boardSection.classList.toggle("hidden", !hasBoard);
   if (hasBoard) requestAnimationFrame(scaleBoardToFit);
 }
 
-function renderBoard(board, solution) {
+function renderBoard(board, solution, options = {}) {
   boardEl.innerHTML = "";
 
   if (!Array.isArray(board?.nodes)) {
@@ -200,10 +202,34 @@ function renderBoard(board, solution) {
     }
   }
 
-  for (const placement of solution?.placements ?? []) {
+  for (const [index, placement] of (solution?.placements ?? []).entries()) {
     const domino = renderDominoPlacement(placement, nodesById);
+    if (domino && options.animatePlacements) {
+      domino.classList.add("is-placing");
+      domino.style.animationDelay = `${index * 70}ms`;
+    }
     if (domino) boardEl.appendChild(domino);
   }
+}
+
+function renderDominoTray(dominoes, solution) {
+  dominoTrayEl.innerHTML = "";
+  dominoTrayEl.classList.toggle("hidden", !!solution?.placements?.length || !dominoes.length);
+  if (solution?.placements?.length || !dominoes.length) return;
+
+  for (const domino of dominoes) {
+    dominoTrayEl.appendChild(renderTrayDomino(domino));
+  }
+}
+
+function renderTrayDomino(domino) {
+  const element = document.createElement("div");
+  element.className = "Domino-module_domino__hSfP4 solved-domino horizontal tray-domino";
+  element.append(
+    renderHalfDomino(domino.top, true),
+    renderHalfDomino(domino.bottom, false)
+  );
+  return element;
 }
 
 function scaleBoardToFit() {

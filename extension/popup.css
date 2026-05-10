@@ -223,8 +223,58 @@ button:disabled {
   -webkit-user-select: none;
 }
 
+.solved-domino.is-placing {
+  opacity: 0;
+  transform: translateY(-10px) scale(0.96);
+  animation: domino-place 260ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
 .solved-domino.vertical {
   flex-direction: column;
+}
+
+.domino-tray {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.domino-tray.hidden {
+  display: none;
+}
+
+.tray-domino {
+  flex: 0 0 auto;
+  width: calc(var(--popup-board-cell-size) * 2 + var(--pips-board-gap));
+  height: var(--popup-board-cell-size);
+  min-width: 58px;
+  min-height: 29px;
+  pointer-events: none;
+}
+
+@keyframes domino-place {
+  0% {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.96);
+  }
+  70% {
+    opacity: 1;
+    transform: translateY(1px) scale(1.01);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .solved-domino.is-placing {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
 }
 
 .Domino-module_halfDomino__FWnOS {
