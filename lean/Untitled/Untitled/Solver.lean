@@ -13,26 +13,33 @@ def Pip.neighbors (pip : Pip) (n : Node) : List Node :=
 def isNodeUsed (assignment : AssignmentImpl) (n : Node) : Bool :=
   assignment.any (λ (_, n₁, n₂) => n₁ == n || n₂ == n)
 
-/-- Check constraints that can be evaluated given the current partial assignment.
-    A constraint is checked only if all its nodes have been assigned values. -/
+/-- Check whether a single constraint can still be satisfied by a partial
+    assignment. Fully assigned constraints are evaluated exactly; partially
+    assigned constraints are pruned when the current values already make them
+    impossible. -/
+def checkConstraintPartial (assignment : AssignmentImpl) : Constraint → Bool
+  | .sum ns target ty =>
+    let vals := ns.filterMap (nodeValueImpl assignment)
+    let sum := vals.sum
+    if vals.length == ns.length then
+      match ty with
+      | .eq => sum == target
+      | .lt => sum < target
+      | .gt => sum > target
+    else
+      match ty with
+      | .eq => sum <= target
+      | .lt => sum < target
+      | .gt => true
+  | .equiv ns =>
+    let vals := ns.filterMap (nodeValueImpl assignment)
+    match vals with
+    | [] => true
+    | v :: rest => rest.all (· == v)
+
+/-- Check constraints against the current partial assignment. -/
 def checkConstraintsPartial (assignment : AssignmentImpl) (cs : List Constraint) : Bool :=
-  cs.all (λ c =>
-    match c with
-    | .sum ns target ty =>
-      let vals := ns.filterMap (nodeValueImpl assignment)
-      if vals.length == ns.length then
-        match ty with
-        | .eq => vals.sum == target
-        | .lt => vals.sum < target
-        | .gt => vals.sum > target
-      else true
-    | .equiv ns =>
-      let vals := ns.filterMap (nodeValueImpl assignment)
-      if vals.length == ns.length then
-        match vals with
-        | [] => true
-        | v :: rest => rest.all (· == v)
-      else true)
+  cs.all (checkConstraintPartial assignment)
 
 /-- Find uncovered edges: edges where neither endpoint pair is assigned by a single domino. -/
 def uncoveredEdges (pip : Pip) (assignment : AssignmentImpl) : List (Node × Node) :=
@@ -82,7 +89,7 @@ inductive TimedSolveResult where
 def deadlineExceeded (deadlineMs : Nat) : IO Bool := do
   return (← IO.monoMsNow) >= deadlineMs
 
-partial def solveAuxTimed
+def solveAuxTimed
     (deadlineMs : Nat)
     (pip : Pip)
     (cs : List Constraint)
@@ -91,27 +98,13 @@ partial def solveAuxTimed
   if ← deadlineExceeded deadlineMs then
     return .timedOut
 
-  if !checkConstraintsPartial assignment cs then
-    return .unsolved
+  let result := solveAux pip cs remaining assignment
+  if ← deadlineExceeded deadlineMs then
+    return .timedOut
 
-  match remaining with
-  | [] =>
-    if assignmentIsValid pip assignment && checkAllConstraints assignment cs then
-      return .solved assignment
-    else
-      return .unsolved
-  | domino :: rest =>
-    for (n₁, n₂) in uncoveredEdges pip assignment do
-      if ← deadlineExceeded deadlineMs then
-        return .timedOut
-
-      for placement in tryPlace domino n₁ n₂ do
-        match ← solveAuxTimed deadlineMs pip cs rest (placement :: assignment) with
-        | .solved assignment => return .solved assignment
-        | .timedOut => return .timedOut
-        | .unsolved => pure ()
-
-    return .unsolved
+  match result with
+  | some assignment => return .solved assignment
+  | none => return .unsolved
 
 /-- IO solver variant used by the HTTP server so long searches can release the server. -/
 def solveTimed

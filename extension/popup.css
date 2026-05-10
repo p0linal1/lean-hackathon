@@ -346,7 +346,8 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-height: 90px;
+  min-height: 130px;
+  max-height: 160px;
   overflow-y: auto;
   padding: 6px;
   margin-bottom: 8px;
